@@ -12,6 +12,7 @@ import numpy as np
 from utils.dtw_metric import dtw, accelerated_dtw
 from utils.augmentation import run_augmentation, run_augmentation_single
 from utils.wandb_utils import log_wandb
+from utils.losses import CCCLoss
 
 warnings.filterwarnings('ignore')
 
@@ -36,8 +37,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         return model_optim
 
     def _select_criterion(self):
-        criterion = nn.MSELoss()
-        return criterion
+        loss_name = str(getattr(self.args, 'loss', 'MSE') or 'MSE').strip().upper()
+        if loss_name in {'MSE', 'L2'}:
+            return nn.MSELoss()
+        if loss_name in {'MAE', 'L1'}:
+            return nn.L1Loss()
+        if loss_name in {'CCC', 'CCCL'}:
+            return CCCLoss()
+        print(f"[warn] unknown loss '{loss_name}', fallback to MSE")
+        return nn.MSELoss()
  
 
     def vali(self, vali_data, vali_loader, criterion):

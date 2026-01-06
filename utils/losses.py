@@ -87,3 +87,29 @@ class mase_loss(nn.Module):
         masep = t.mean(t.abs(insample[:, freq:] - insample[:, :-freq]), dim=1)
         masked_masep_inv = divide_no_nan(mask, masep[:, None])
         return t.mean(t.abs(target - forecast) * masked_masep_inv)
+
+
+class CCCLoss(nn.Module):
+    def __init__(self, eps: float = 1e-8):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, pred: t.Tensor, target: t.Tensor) -> t.Tensor:
+        pred = pred.reshape(-1).float()
+        target = target.reshape(-1).float()
+
+        mean_pred = t.mean(pred)
+        mean_target = t.mean(target)
+
+        pred_centered = pred - mean_pred
+        target_centered = target - mean_target
+
+        var_pred = t.mean(pred_centered ** 2)
+        var_target = t.mean(target_centered ** 2)
+        cov = t.mean(pred_centered * target_centered)
+
+        mean_diff_sq = (mean_pred - mean_target) ** 2
+        denom = var_pred + var_target + mean_diff_sq
+        ccc = (2.0 * cov) / (denom + self.eps)
+        ccc = t.where(denom < self.eps, t.ones_like(ccc), ccc)
+        return 1.0 - ccc

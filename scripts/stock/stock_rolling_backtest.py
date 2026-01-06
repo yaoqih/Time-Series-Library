@@ -24,6 +24,7 @@ from utils.wandb_utils import init_wandb, log_wandb, finish_wandb
 ZERO_SHOT_MODELS = {
     'Chronos', 'Chronos2', 'Moirai', 'Sundial', 'TiRex', 'TimeMoE', 'TimesFM'
 }
+RANK_TARGETS = {'lag_return_rank', 'lag_return_cs_rank'}
 
 
 def build_setting(args, tag):
@@ -368,6 +369,18 @@ def predict_dataset(exp, data_set, data_loader, args):
     exp.model.eval()
     records = []
     offset = 0
+    open_pos = None
+    open_scale = None
+    open_mean = None
+    need_true_open_return = getattr(args, 'target', '') in RANK_TARGETS
+    if need_true_open_return:
+        try:
+            open_pos = data_set.feature_cols.index('open')
+        except (AttributeError, ValueError):
+            open_pos = None
+        if open_pos is not None and getattr(data_set, 'scale', False) and getattr(data_set, '_scaler_fitted', False):
+            open_scale = float(data_set.scaler.scale_[open_pos])
+            open_mean = float(data_set.scaler.mean_[open_pos])
     with torch.no_grad():
         for batch_x, batch_y, batch_x_mark, batch_y_mark in data_loader:
             batch_x = batch_x.float().to(exp.device)
@@ -396,6 +409,25 @@ def predict_dataset(exp, data_set, data_loader, args):
 
             for i in range(len(pred_step)):
                 meta = data_set.sample_meta[offset + i]
+                true_return = float(true_step[i])
+                if need_true_open_return:
+                    code, end_idx = data_set.sample_index[offset + i]
+                    trade_idx = int(end_idx) + 1
+                    pred_idx = int(end_idx) + int(args.pred_len)
+                    payload = data_set.data_by_code.get(code)
+                    if payload is None or open_pos is None:
+                        true_return = float('nan')
+                    else:
+                        data = payload['data']
+                        open_trade = float(data[trade_idx, open_pos])
+                        open_pred = float(data[pred_idx, open_pos])
+                        if open_scale is not None and open_mean is not None:
+                            open_trade = open_trade * open_scale + open_mean
+                            open_pred = open_pred * open_scale + open_mean
+                        if open_trade > 0 and open_pred > 0:
+                            true_return = open_pred / open_trade - 1.0
+                        else:
+                            true_return = float('nan')
                 records.append({
                     'code': meta['code'],
                     'end_date': meta['end_date'],
@@ -403,7 +435,7 @@ def predict_dataset(exp, data_set, data_loader, args):
                     'pred_date': meta['pred_date'],
                     'suspendFlag': meta['suspendFlag'],
                     'pred_return': float(pred_step[i]),
-                    'true_return': float(true_step[i])
+                    'true_return': float(true_return)
                 })
             offset += len(pred_step)
     return pd.DataFrame.from_records(records)
@@ -430,12 +462,13 @@ def parse_args():
     parser.add_argument('--label_len', type=int, default=1, help='start token length')
     parser.add_argument('--pred_len', type=int, default=2, help='prediction sequence length')
     parser.add_argument('--features', type=str, default='MS', help='forecasting task options:[M, S, MS]')
-    parser.add_argument('--target', type=str, default='lag_return', help='target feature')
+    parser.add_argument('--target', type=str, default='lag_return_cs_rank', help='target feature')
     parser.add_argument('--freq', type=str, default='b', help='freq for time features encoding')
 
     parser.add_argument('--train_epochs', type=int, default=10, help='train epochs')
     parser.add_argument('--batch_size', type=int, default=1024, help='batch size')
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='learning rate')
+    parser.add_argument('--loss', type=str, default='CCC', help='loss function (e.g., MSE, CCC)')
     parser.add_argument('--patience', type=int, default=3, help='early stopping patience')
     parser.add_argument('--num_workers', type=int, default=4, help='data loader workers')
     parser.add_argument('--persistent_workers', action='store_true', default=True,

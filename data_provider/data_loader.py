@@ -1224,7 +1224,7 @@ class Dataset_Stock(Dataset):
                     'settle', 'openInterest', 'preClose', 'suspendFlag'
                 }
                 wanted = {'code', 'time', self.target} | base_cols
-                if self.target == 'lag_return':
+                if self.target in {'lag_return', 'lag_return_rank', 'lag_return_cs_rank'}:
                     wanted |= {'open', 'close', 'preClose'}
                 read_columns = [c for c in wanted if c in available]
             except Exception:
@@ -1245,7 +1245,7 @@ class Dataset_Stock(Dataset):
 
         if 'open' not in df_raw.columns:
             raise ValueError("stock data must include 'open' column")
-        if self.target == 'lag_return':
+        if self.target in {'lag_return', 'lag_return_rank', 'lag_return_cs_rank'}:
             if 'close' not in df_raw.columns:
                 raise ValueError("stock data must include 'close' column for lag_return chaining")
             if 'preClose' not in df_raw.columns:
@@ -1264,6 +1264,8 @@ class Dataset_Stock(Dataset):
             if STOCK_RETURN_LIMIT is not None:
                 valid &= np.abs(lag_return) <= STOCK_RETURN_LIMIT
             df_raw['lag_return'] = lag_return.where(valid)
+            if self.target != 'lag_return':
+                df_raw[self.target] = df_raw.groupby('datetime')['lag_return'].rank(pct=True)
 
         if self.target not in df_raw.columns:
             raise ValueError(f"target '{self.target}' not found in stock data")
