@@ -1,0 +1,14 @@
+{
+  "size": 3,
+  "models": "FiLM,LightTS,TimeMixer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -22.870338268253267,
+  "std_test_cumulative_return_pct": 28.716256123553556,
+  "min_test_cumulative_return_pct": -72.57057827952661,
+  "max_test_cumulative_return_pct": 30.776668591177604,
+  "mean_test_annualized_return_pct": -33.21717363739185,
+  "mean_test_max_drawdown_pct": 48.311863791607315,
+  "mean_test_sharpe": -0.4623546720630497,
+  "mean_test_win_rate_pct": 44.771984567997784,
+  "mean_test_profit_factor": 0.7812910200024427
+}

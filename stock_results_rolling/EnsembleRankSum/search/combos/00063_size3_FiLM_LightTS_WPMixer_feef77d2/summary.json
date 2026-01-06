@@ -1,0 +1,14 @@
+{
+  "size": 3,
+  "models": "FiLM,LightTS,WPMixer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -16.892840814814416,
+  "std_test_cumulative_return_pct": 37.51735070066956,
+  "min_test_cumulative_return_pct": -77.9981745081414,
+  "max_test_cumulative_return_pct": 56.00319677125011,
+  "mean_test_annualized_return_pct": 20.53828479385356,
+  "mean_test_max_drawdown_pct": 43.239615911741474,
+  "mean_test_sharpe": 0.09151591615391365,
+  "mean_test_win_rate_pct": 45.049625046774864,
+  "mean_test_profit_factor": 0.8201649056762775
+}

@@ -1,0 +1,14 @@
+{
+  "size": 3,
+  "models": "FiLM,FreTS,LightTS",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -23.459323552762797,
+  "std_test_cumulative_return_pct": 34.450016210269524,
+  "min_test_cumulative_return_pct": -73.87678795858251,
+  "max_test_cumulative_return_pct": 53.99711942845607,
+  "mean_test_annualized_return_pct": -8.14084396935476,
+  "mean_test_max_drawdown_pct": 42.71151392531533,
+  "mean_test_sharpe": -0.10971246694856615,
+  "mean_test_win_rate_pct": 45.464298984516454,
+  "mean_test_profit_factor": 0.8087598694790175
+}

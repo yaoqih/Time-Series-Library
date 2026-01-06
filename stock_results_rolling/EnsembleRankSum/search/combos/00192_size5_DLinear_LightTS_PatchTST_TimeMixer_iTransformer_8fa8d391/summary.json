@@ -1,0 +1,14 @@
+{
+  "size": 5,
+  "models": "DLinear,LightTS,PatchTST,TimeMixer,iTransformer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": 0.6863215230980985,
+  "std_test_cumulative_return_pct": 53.66985273389948,
+  "min_test_cumulative_return_pct": -58.94178430210577,
+  "max_test_cumulative_return_pct": 185.92554420769042,
+  "mean_test_annualized_return_pct": 380.1838325085844,
+  "mean_test_max_drawdown_pct": 36.9637810271927,
+  "mean_test_sharpe": 4.371894627802974,
+  "mean_test_win_rate_pct": 47.24261737065403,
+  "mean_test_profit_factor": 1.0328209831360602
+}

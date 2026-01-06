@@ -1,0 +1,2 @@
+size,models,num_windows,mean_test_cumulative_return_pct,std_test_cumulative_return_pct,min_test_cumulative_return_pct,max_test_cumulative_return_pct,mean_test_annualized_return_pct,mean_test_max_drawdown_pct,mean_test_sharpe,mean_test_win_rate_pct,mean_test_profit_factor
+3,"TimeMixer,WPMixer,iTransformer",22,-15.495978384369943,44.66854464650595,-76.74987484025428,66.41147176582926,75.69357393094455,43.892952873862654,0.606463875593509,45.98009105196058,0.8465950131649322

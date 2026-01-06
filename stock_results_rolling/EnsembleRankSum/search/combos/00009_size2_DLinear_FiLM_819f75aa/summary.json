@@ -1,0 +1,14 @@
+{
+  "size": 2,
+  "models": "DLinear,FiLM",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -14.976981388674096,
+  "std_test_cumulative_return_pct": 45.848231266994325,
+  "min_test_cumulative_return_pct": -66.37285402940152,
+  "max_test_cumulative_return_pct": 131.30860426925432,
+  "mean_test_annualized_return_pct": 132.76540417595774,
+  "mean_test_max_drawdown_pct": 43.25121579697926,
+  "mean_test_sharpe": 1.0791120329574249,
+  "mean_test_win_rate_pct": 46.35219543539163,
+  "mean_test_profit_factor": 0.8641401267742858
+}

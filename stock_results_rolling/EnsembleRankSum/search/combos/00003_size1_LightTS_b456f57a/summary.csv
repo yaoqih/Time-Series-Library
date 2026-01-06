@@ -1,0 +1,2 @@
+size,models,num_windows,mean_test_cumulative_return_pct,std_test_cumulative_return_pct,min_test_cumulative_return_pct,max_test_cumulative_return_pct,mean_test_annualized_return_pct,mean_test_max_drawdown_pct,mean_test_sharpe,mean_test_win_rate_pct,mean_test_profit_factor
+1,LightTS,22,-4.178979339455837,52.61442973373173,-85.14130102839799,132.74633723832528,226.03648275415983,41.35665537537701,1.717352723595676,46.77347265843432,0.9245113524788131

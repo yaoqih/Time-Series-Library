@@ -1,0 +1,14 @@
+{
+  "size": 3,
+  "models": "FreTS,PatchTST,TimeMixer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -3.3277724726846687,
+  "std_test_cumulative_return_pct": 47.64266493902031,
+  "min_test_cumulative_return_pct": -70.20711918105106,
+  "max_test_cumulative_return_pct": 115.24033801265368,
+  "mean_test_annualized_return_pct": 177.52143821951864,
+  "mean_test_max_drawdown_pct": 39.33640626430526,
+  "mean_test_sharpe": 1.7698180938293342,
+  "mean_test_win_rate_pct": 47.80524908992218,
+  "mean_test_profit_factor": 0.9719886575162948
+}

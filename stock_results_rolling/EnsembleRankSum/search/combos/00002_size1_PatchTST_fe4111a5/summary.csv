@@ -1,0 +1,2 @@
+size,models,num_windows,mean_test_cumulative_return_pct,std_test_cumulative_return_pct,min_test_cumulative_return_pct,max_test_cumulative_return_pct,mean_test_annualized_return_pct,mean_test_max_drawdown_pct,mean_test_sharpe,mean_test_win_rate_pct,mean_test_profit_factor
+1,PatchTST,22,-15.043500323810235,37.66181648717832,-66.9100304448231,77.10373384292252,47.890927163638665,46.649868716711325,0.47168360141667665,46.029676171098544,0.8885494066279954

@@ -1,0 +1,14 @@
+{
+  "size": 4,
+  "models": "FiLM,FreTS,TimeMixer,iTransformer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -9.706549544577342,
+  "std_test_cumulative_return_pct": 34.83566006458069,
+  "min_test_cumulative_return_pct": -61.61813468363351,
+  "max_test_cumulative_return_pct": 85.5894708337656,
+  "mean_test_annualized_return_pct": 62.755187336767136,
+  "mean_test_max_drawdown_pct": 37.334258475173414,
+  "mean_test_sharpe": 0.7244780015497839,
+  "mean_test_win_rate_pct": 46.30876489046054,
+  "mean_test_profit_factor": 0.938171237212013
+}

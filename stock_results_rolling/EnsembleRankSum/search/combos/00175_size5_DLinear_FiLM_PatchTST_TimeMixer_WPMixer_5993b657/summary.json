@@ -1,0 +1,14 @@
+{
+  "size": 5,
+  "models": "DLinear,FiLM,PatchTST,TimeMixer,WPMixer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -9.675689370122603,
+  "std_test_cumulative_return_pct": 42.17889908587978,
+  "min_test_cumulative_return_pct": -60.5408959657433,
+  "max_test_cumulative_return_pct": 119.81498994896873,
+  "mean_test_annualized_return_pct": 111.32300377228302,
+  "mean_test_max_drawdown_pct": 40.51378528569136,
+  "mean_test_sharpe": 1.203698477045859,
+  "mean_test_win_rate_pct": 46.265997263807485,
+  "mean_test_profit_factor": 0.916284033517518
+}

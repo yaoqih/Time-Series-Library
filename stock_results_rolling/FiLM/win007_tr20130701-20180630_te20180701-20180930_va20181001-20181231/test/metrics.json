@@ -1,0 +1,11 @@
+{
+  "final_capital": 404619.5291550708,
+  "cumulative_return_pct": -59.538047084492916,
+  "annualized_return_pct": -97.66104902651887,
+  "max_drawdown_pct": 59.27982588146378,
+  "sharpe": -1.930602262637138,
+  "win_rate_pct": 34.375,
+  "profit_factor": 0.33819634888511474,
+  "total_trades": 128,
+  "trade_days": 64
+}

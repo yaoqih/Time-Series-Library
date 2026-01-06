@@ -1,0 +1,14 @@
+{
+  "size": 5,
+  "models": "DLinear,FiLM,FreTS,LightTS,iTransformer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -8.09935113433917,
+  "std_test_cumulative_return_pct": 54.29924362858682,
+  "min_test_cumulative_return_pct": -69.98811915029827,
+  "max_test_cumulative_return_pct": 199.6910449789525,
+  "mean_test_annualized_return_pct": 377.85936652140697,
+  "mean_test_max_drawdown_pct": 38.338188978251374,
+  "mean_test_sharpe": 3.8228310546799404,
+  "mean_test_win_rate_pct": 46.55615542220502,
+  "mean_test_profit_factor": 0.944714829866641
+}

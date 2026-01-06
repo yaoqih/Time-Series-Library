@@ -1,0 +1,47 @@
+你现在所在的是清华tslib的仓库，我想使用这个仓库做股票量化分析的评估。stock_data.parquet是所有的数据，
+field	数据类型	含义
+time	int	时间
+open	float	开盘价
+high	float	最高价
+low	float	最低价
+close	float	收盘价
+volume	float	成交量
+amount	float	成交额
+settle	float	今结算
+openInterest	float	持仓量
+preClose	float	前收盘价
+suspendFlag	int	停牌 1停牌，0 不停牌
+data 日期 19901219
+code 股票代码 000543.SZ
+接下来你需要完成从股票基本数据到tslib的数据加载适配。然后分别使用TimeXer、iTransformer、PatchTST
+TSMixer、DLinear
+TimeMixer、FEDformer
+Chronos2、TiRex、Time-MoE
+模型进行训练14年到23年数据作为训练集，24年数据作为测试集25年数据作为验证集。
+训练的目标是预测下下个交易日的开盘价相比于下个交易日开盘价上涨的比例。在训练的过程中要谨防数据泄露的问题。
+在训练完进行回测，回测的是24和25年的数据。回测的目标是使用模型预测的下下个交易日开盘价相比于下个交易日开盘价上涨的比例进行排序，采取tok=1的股票进行交易，每天开盘按照开盘价先卖后买。交易成本：计入佣金（0.03%）、印花税（0.1%）
+回测指标是最终资金	初始资金 + 总收益（含交易成本）	直观展示回测周期内的资金增值效果
+累计收益率	（最终资金 - 初始资金）/ 初始资金 × 100%	评估回测周期内的总收益能力
+年化收益率	(（最终资金 / 初始资金）^(1 / 回测年数) - 1) × 100%	标准化收益指标，便于跨周期 / 跨策略对比
+最大回撤	回测期间最大亏损幅度 = （峰值资金 - 谷值资金）/ 峰值资金 × 100%	评估模型的风险控制能力，回撤越小风险越低
+夏普比率	（年化收益率 - 无风险利率）/ 年化波动率	衡量单位风险的收益回报，数值越高性价比越高（无风险利率取国债利率 3%）
+胜率	盈利交易次数 / 总交易次数 × 100%	评估模型预测的准确性，胜率越高说明上涨信号越可靠
+盈亏比	总盈利金额 / 总亏损金额	评估单次盈利与单次亏损的比例，盈亏比＞1 说明盈利覆盖亏损
+总交易次数	回测期间买入卖出的总次数	评估模型的交易频率，避免过度交易（高交易成本）
+交易天数	回测期间有交易的天数	评估模型的交易活跃度，结合胜率分析有效交易占比
+代码实现的过程应该简洁优雅高效。请帮我添加wandb来追踪训练和回测过程中各指标的变化
+streamlit run web/stock_backtest_app.py
+python scripts/stock/stock_rolling_backtest.py --devices 0 --parallel_windows --model  iTransformer
+
+python scripts/stock/stock_rolling_backtest.py --devices 0 --parallel_windows --model  LightTS --batch_size 2048
+python scripts/stock/stock_rolling_backtest.py --devices 0 --parallel_windows --model  DLinear --batch_size 2048
+python scripts/stock/stock_rolling_backtest.py --devices 0,1,2,3,4,5,6 --parallel_windows --model  FiLM --batch_size 2048
+  OMP_NUM_THREADS=1 python scripts/stock/stock_ensemble_backtest.py \
+    --search \
+    --combo_sizes 1,2,3,4,5,6,7,8 \
+    --search_split test \
+    --no_wandb \
+    --num_workers 14
+  python scripts/stock/stock_infer_rank_sum.py \
+    --config checkpoints/stock_last6m/last6m/train_config.json \
+    --infer_mode predict

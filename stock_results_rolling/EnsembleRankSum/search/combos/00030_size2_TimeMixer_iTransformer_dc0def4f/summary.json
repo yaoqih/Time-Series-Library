@@ -1,0 +1,14 @@
+{
+  "size": 2,
+  "models": "TimeMixer,iTransformer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -4.074569222297623,
+  "std_test_cumulative_return_pct": 66.13692445355414,
+  "min_test_cumulative_return_pct": -49.69005562080356,
+  "max_test_cumulative_return_pct": 276.1717632020018,
+  "mean_test_annualized_return_pct": 963.6312848685064,
+  "mean_test_max_drawdown_pct": 39.51786270494558,
+  "mean_test_sharpe": 7.0747817687712535,
+  "mean_test_win_rate_pct": 48.54981754482662,
+  "mean_test_profit_factor": 0.8993642184304055
+}

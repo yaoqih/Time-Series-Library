@@ -1,0 +1,178 @@
+{
+  "win000_tr20100101-20141231_te20150101-20150331_va20150401-20150630": {
+    "cumulative_return_pct": 17.791965371173525,
+    "annualized_return_pct": 102.11018940377636,
+    "max_drawdown_pct": 21.88277616005631,
+    "sharpe": 1.5182966947935648,
+    "win_rate_pct": 43.859649122807014,
+    "profit_factor": 1.23086341127494
+  },
+  "win001_tr20100701-20150630_te20150701-20150930_va20151001-20151231": {
+    "cumulative_return_pct": -15.386163157039123,
+    "annualized_return_pct": -49.23867272253555,
+    "max_drawdown_pct": 52.82687908324962,
+    "sharpe": -0.39500759070383107,
+    "win_rate_pct": 55.55555555555556,
+    "profit_factor": 0.9361898181806031
+  },
+  "win002_tr20110101-20151231_te20160101-20160331_va20160401-20160630": {
+    "cumulative_return_pct": -28.91963301319997,
+    "annualized_return_pct": -76.1436398851955,
+    "max_drawdown_pct": 39.572287570351506,
+    "sharpe": -0.7995056975135458,
+    "win_rate_pct": 47.45762711864407,
+    "profit_factor": 0.7947633554997907
+  },
+  "win003_tr20110701-20160630_te20160701-20160930_va20161001-20161231": {
+    "cumulative_return_pct": 9.593982784664398,
+    "annualized_return_pct": 46.264002177170774,
+    "max_drawdown_pct": 32.74313401454048,
+    "sharpe": 0.5847833821117122,
+    "win_rate_pct": 55.55555555555556,
+    "profit_factor": 1.0924342462305021
+  },
+  "win004_tr20120101-20161231_te20170101-20170331_va20170401-20170630": {
+    "cumulative_return_pct": -22.110254041226536,
+    "annualized_return_pct": -64.97288970416423,
+    "max_drawdown_pct": 39.81750104910929,
+    "sharpe": -1.2281566215080908,
+    "win_rate_pct": 44.06779661016949,
+    "profit_factor": 0.6957586660548735
+  },
+  "win005_tr20120701-20170630_te20170701-20170930_va20171001-20171231": {
+    "cumulative_return_pct": -17.770653132644725,
+    "annualized_return_pct": -55.60714166993635,
+    "max_drawdown_pct": 24.885276630958682,
+    "sharpe": -0.9621790362687225,
+    "win_rate_pct": 49.23076923076923,
+    "profit_factor": 0.7838189007094415
+  },
+  "win006_tr20130101-20171231_te20180101-20180331_va20180401-20180630": {
+    "cumulative_return_pct": -27.612596520229477,
+    "annualized_return_pct": -74.24707544445312,
+    "max_drawdown_pct": 48.43333876469204,
+    "sharpe": -0.8832468010575801,
+    "win_rate_pct": 47.45762711864407,
+    "profit_factor": 0.7018317900321
+  },
+  "win007_tr20130701-20180630_te20180701-20180930_va20181001-20181231": {
+    "cumulative_return_pct": -74.41537488880907,
+    "annualized_return_pct": -99.65103914376503,
+    "max_drawdown_pct": 74.35706463777828,
+    "sharpe": -1.9484144925275293,
+    "win_rate_pct": 26.5625,
+    "profit_factor": 0.1670383064477661
+  },
+  "win008_tr20140101-20181231_te20190101-20190331_va20190401-20190630": {
+    "cumulative_return_pct": 38.22777038768525,
+    "annualized_return_pct": 295.47709020954767,
+    "max_drawdown_pct": 44.423141788361676,
+    "sharpe": 2.6443606416588343,
+    "win_rate_pct": 46.55172413793103,
+    "profit_factor": 1.2026096957815786
+  },
+  "win009_tr20140701-20190630_te20190701-20190930_va20191001-20191231": {
+    "cumulative_return_pct": 68.44358772937038,
+    "annualized_return_pct": 729.903845351704,
+    "max_drawdown_pct": 22.436408195828914,
+    "sharpe": 10.443700547917906,
+    "win_rate_pct": 57.8125,
+    "profit_factor": 1.797269218632505
+  },
+  "win010_tr20150101-20191231_te20200101-20200331_va20200401-20200630": {
+    "cumulative_return_pct": -50.043401185575235,
+    "annualized_return_pct": -94.20510690848967,
+    "max_drawdown_pct": 58.21875567443633,
+    "sharpe": -1.0327867292437214,
+    "win_rate_pct": 39.6551724137931,
+    "profit_factor": 0.6503771585313981
+  },
+  "win011_tr20150701-20200630_te20200701-20200930_va20201001-20201231": {
+    "cumulative_return_pct": -40.75390745241727,
+    "annualized_return_pct": -88.04974056320764,
+    "max_drawdown_pct": 45.7827068002731,
+    "sharpe": -1.5919808248742418,
+    "win_rate_pct": 44.61538461538462,
+    "profit_factor": 0.5781139018895521
+  },
+  "win012_tr20160101-20201231_te20210101-20210331_va20210401-20210630": {
+    "cumulative_return_pct": -5.449326165282587,
+    "annualized_return_pct": -21.178369838080958,
+    "max_drawdown_pct": 42.38684683165988,
+    "sharpe": -0.221391268288994,
+    "win_rate_pct": 50.0,
+    "profit_factor": 0.9565694747899256
+  },
+  "win013_tr20160701-20210630_te20210701-20210930_va20211001-20211231": {
+    "cumulative_return_pct": -23.16600051838865,
+    "annualized_return_pct": -65.68075603102017,
+    "max_drawdown_pct": 41.92577477622573,
+    "sharpe": -0.6381770033397017,
+    "win_rate_pct": 46.03174603174603,
+    "profit_factor": 0.8470593824554111
+  },
+  "win014_tr20170101-20211231_te20220101-20220331_va20220401-20220630": {
+    "cumulative_return_pct": 12.939978789766387,
+    "annualized_return_pct": 67.6675837489001,
+    "max_drawdown_pct": 32.859459405241736,
+    "sharpe": 0.9684048605074589,
+    "win_rate_pct": 50.0,
+    "profit_factor": 1.13612814868723
+  },
+  "win015_tr20170701-20220630_te20220701-20220930_va20221001-20221231": {
+    "cumulative_return_pct": -28.546444249458787,
+    "annualized_return_pct": -75.21916033027021,
+    "max_drawdown_pct": 37.22054944765204,
+    "sharpe": -1.2166891349995361,
+    "win_rate_pct": 40.625,
+    "profit_factor": 0.7528074267589213
+  },
+  "win016_tr20180101-20221231_te20230101-20230331_va20230401-20230630": {
+    "cumulative_return_pct": -40.11218730496981,
+    "annualized_return_pct": -88.38001960256099,
+    "max_drawdown_pct": 45.39295080092358,
+    "sharpe": -1.745914342112705,
+    "win_rate_pct": 38.983050847457626,
+    "profit_factor": 0.5059755405115237
+  },
+  "win017_tr20180701-20230630_te20230701-20230930_va20231001-20231231": {
+    "cumulative_return_pct": 13.579204546761048,
+    "annualized_return_pct": 70.67099202993661,
+    "max_drawdown_pct": 20.054879313637443,
+    "sharpe": 1.1887497607093676,
+    "win_rate_pct": 50.0,
+    "profit_factor": 1.1543007687266977
+  },
+  "win018_tr20190101-20231231_te20240101-20240331_va20240401-20240630": {
+    "cumulative_return_pct": 3.560159315434832,
+    "annualized_return_pct": 15.819900407155508,
+    "max_drawdown_pct": 28.93462120790661,
+    "sharpe": 0.16055087581177413,
+    "win_rate_pct": 44.827586206896555,
+    "profit_factor": 1.0324376092117584
+  },
+  "win019_tr20190701-20240630_te20240701-20240930_va20241001-20241231": {
+    "cumulative_return_pct": 81.99028474409576,
+    "annualized_return_pct": 1035.9580579932833,
+    "max_drawdown_pct": 14.546258206582468,
+    "sharpe": 13.536964700069058,
+    "win_rate_pct": 53.96825396825397,
+    "profit_factor": 2.0252545368414094
+  },
+  "win020_tr20200101-20241231_te20250101-20250331_va20250401-20250630": {
+    "cumulative_return_pct": -29.050220097261516,
+    "annualized_return_pct": -75.9363123821141,
+    "max_drawdown_pct": 34.5276906245366,
+    "sharpe": -1.3184004076703808,
+    "win_rate_pct": 38.59649122807017,
+    "profit_factor": 0.6487198943896951
+  },
+  "win021_tr20200701-20250630_te20250701-20250930_va20251001-20251231": {
+    "cumulative_return_pct": -23.134091922750265,
+    "annualized_return_pct": -65.62287777083861,
+    "max_drawdown_pct": 23.157790090786264,
+    "sharpe": -1.1361006246091425,
+    "win_rate_pct": 43.07692307692308,
+    "profit_factor": 0.7264832570262688
+  }
+}

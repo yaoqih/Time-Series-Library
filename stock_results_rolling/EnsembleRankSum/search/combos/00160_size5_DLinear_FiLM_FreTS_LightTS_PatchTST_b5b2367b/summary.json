@@ -1,0 +1,14 @@
+{
+  "size": 5,
+  "models": "DLinear,FiLM,FreTS,LightTS,PatchTST",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -16.230160819771726,
+  "std_test_cumulative_return_pct": 33.60286686460758,
+  "min_test_cumulative_return_pct": -64.80722570302218,
+  "max_test_cumulative_return_pct": 82.91056341392957,
+  "mean_test_annualized_return_pct": 19.11109543936793,
+  "mean_test_max_drawdown_pct": 38.687637885420266,
+  "mean_test_sharpe": 0.062277110712051977,
+  "mean_test_win_rate_pct": 44.95599551022664,
+  "mean_test_profit_factor": 0.8462271954218863
+}

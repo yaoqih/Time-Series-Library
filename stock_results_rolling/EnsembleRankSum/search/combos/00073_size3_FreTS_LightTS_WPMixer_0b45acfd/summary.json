@@ -1,0 +1,14 @@
+{
+  "size": 3,
+  "models": "FreTS,LightTS,WPMixer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -12.469220352595794,
+  "std_test_cumulative_return_pct": 36.84942191993955,
+  "min_test_cumulative_return_pct": -61.128229867647754,
+  "max_test_cumulative_return_pct": 101.59794952000266,
+  "mean_test_annualized_return_pct": 59.01159308227409,
+  "mean_test_max_drawdown_pct": 39.4004277457828,
+  "mean_test_sharpe": 0.6082057926941682,
+  "mean_test_win_rate_pct": 47.96562161523115,
+  "mean_test_profit_factor": 0.8915519051738493
+}

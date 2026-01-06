@@ -1,0 +1,14 @@
+{
+  "size": 3,
+  "models": "LightTS,PatchTST,iTransformer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -6.723836596286952,
+  "std_test_cumulative_return_pct": 54.41709538230295,
+  "min_test_cumulative_return_pct": -56.864815723271434,
+  "max_test_cumulative_return_pct": 214.76308155357654,
+  "mean_test_annualized_return_pct": 451.0837289375755,
+  "mean_test_max_drawdown_pct": 38.5208461877563,
+  "mean_test_sharpe": 3.298170617553662,
+  "mean_test_win_rate_pct": 48.140464062867274,
+  "mean_test_profit_factor": 0.9010160584701147
+}

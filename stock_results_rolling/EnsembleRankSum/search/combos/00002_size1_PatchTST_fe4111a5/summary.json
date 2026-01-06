@@ -1,0 +1,14 @@
+{
+  "size": 1,
+  "models": "PatchTST",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -15.043500323810235,
+  "std_test_cumulative_return_pct": 37.66181648717832,
+  "min_test_cumulative_return_pct": -66.9100304448231,
+  "max_test_cumulative_return_pct": 77.10373384292252,
+  "mean_test_annualized_return_pct": 47.890927163638665,
+  "mean_test_max_drawdown_pct": 46.649868716711325,
+  "mean_test_sharpe": 0.47168360141667665,
+  "mean_test_win_rate_pct": 46.029676171098544,
+  "mean_test_profit_factor": 0.8885494066279954
+}

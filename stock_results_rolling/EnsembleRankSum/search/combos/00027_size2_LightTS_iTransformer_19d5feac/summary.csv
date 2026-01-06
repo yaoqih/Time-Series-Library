@@ -1,0 +1,2 @@
+size,models,num_windows,mean_test_cumulative_return_pct,std_test_cumulative_return_pct,min_test_cumulative_return_pct,max_test_cumulative_return_pct,mean_test_annualized_return_pct,mean_test_max_drawdown_pct,mean_test_sharpe,mean_test_win_rate_pct,mean_test_profit_factor
+2,"LightTS,iTransformer",22,9.249868314206605,108.02512206460673,-66.61890010859116,480.08994066182265,5729.908328301561,40.2329850511453,33.54546780834897,46.86313211119323,0.9485987713238518

@@ -1,0 +1,14 @@
+{
+  "size": 3,
+  "models": "FiLM,FreTS,iTransformer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -0.8995466803790898,
+  "std_test_cumulative_return_pct": 43.2854639933831,
+  "min_test_cumulative_return_pct": -46.03382991322824,
+  "max_test_cumulative_return_pct": 135.5485827344179,
+  "mean_test_annualized_return_pct": 189.24258185234456,
+  "mean_test_max_drawdown_pct": 35.936911971149826,
+  "mean_test_sharpe": 1.9987696407524955,
+  "mean_test_win_rate_pct": 47.55309767723638,
+  "mean_test_profit_factor": 1.0167612352976774
+}

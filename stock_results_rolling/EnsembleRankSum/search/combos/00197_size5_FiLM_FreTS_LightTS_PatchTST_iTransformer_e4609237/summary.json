@@ -1,0 +1,14 @@
+{
+  "size": 5,
+  "models": "FiLM,FreTS,LightTS,PatchTST,iTransformer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -11.383481356310757,
+  "std_test_cumulative_return_pct": 35.222196902521254,
+  "min_test_cumulative_return_pct": -58.792488202416514,
+  "max_test_cumulative_return_pct": 81.35005196658159,
+  "mean_test_annualized_return_pct": 52.54660163049361,
+  "mean_test_max_drawdown_pct": 39.14781248579333,
+  "mean_test_sharpe": 0.5357722075882755,
+  "mean_test_win_rate_pct": 47.28877353004998,
+  "mean_test_profit_factor": 0.9188091565688624
+}

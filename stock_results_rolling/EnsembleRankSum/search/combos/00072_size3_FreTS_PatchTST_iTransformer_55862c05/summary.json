@@ -1,0 +1,14 @@
+{
+  "size": 3,
+  "models": "FreTS,PatchTST,iTransformer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": 2.363869925903248,
+  "std_test_cumulative_return_pct": 49.63286276656874,
+  "min_test_cumulative_return_pct": -63.39995225756532,
+  "max_test_cumulative_return_pct": 190.63943747385088,
+  "mean_test_annualized_return_pct": 363.64947539279314,
+  "mean_test_max_drawdown_pct": 37.03660769555075,
+  "mean_test_sharpe": 2.774597910350147,
+  "mean_test_win_rate_pct": 46.58540881778101,
+  "mean_test_profit_factor": 0.9880525973059818
+}

@@ -1,0 +1,2 @@
+size,models,num_windows,mean_test_cumulative_return_pct,std_test_cumulative_return_pct,min_test_cumulative_return_pct,max_test_cumulative_return_pct,mean_test_annualized_return_pct,mean_test_max_drawdown_pct,mean_test_sharpe,mean_test_win_rate_pct,mean_test_profit_factor
+2,"LightTS,TimeMixer",22,-12.000439889828789,35.81840996029193,-55.99578140174414,108.2865271292742,59.41718256054036,38.40604774963037,0.37065727284910127,44.866305149294085,0.8603894544521967

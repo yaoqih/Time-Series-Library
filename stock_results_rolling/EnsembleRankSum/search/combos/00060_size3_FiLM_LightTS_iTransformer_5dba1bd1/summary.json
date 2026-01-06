@@ -1,0 +1,14 @@
+{
+  "size": 3,
+  "models": "FiLM,LightTS,iTransformer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -12.995947986367959,
+  "std_test_cumulative_return_pct": 52.87130318784773,
+  "min_test_cumulative_return_pct": -76.66003057173693,
+  "max_test_cumulative_return_pct": 123.79778599332836,
+  "mean_test_annualized_return_pct": 231.41577462888398,
+  "mean_test_max_drawdown_pct": 44.272624953597905,
+  "mean_test_sharpe": 3.0110722753805175,
+  "mean_test_win_rate_pct": 45.530684651870324,
+  "mean_test_profit_factor": 0.9330364130034912
+}

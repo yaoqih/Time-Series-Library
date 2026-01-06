@@ -1,0 +1,14 @@
+{
+  "size": 1,
+  "models": "LightTS",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -4.178979339455837,
+  "std_test_cumulative_return_pct": 52.61442973373173,
+  "min_test_cumulative_return_pct": -85.14130102839799,
+  "max_test_cumulative_return_pct": 132.74633723832528,
+  "mean_test_annualized_return_pct": 226.03648275415983,
+  "mean_test_max_drawdown_pct": 41.35665537537701,
+  "mean_test_sharpe": 1.717352723595676,
+  "mean_test_win_rate_pct": 46.77347265843432,
+  "mean_test_profit_factor": 0.9245113524788131
+}

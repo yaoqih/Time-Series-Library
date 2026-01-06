@@ -1,0 +1,2 @@
+size,models,num_windows,mean_test_cumulative_return_pct,std_test_cumulative_return_pct,min_test_cumulative_return_pct,max_test_cumulative_return_pct,mean_test_annualized_return_pct,mean_test_max_drawdown_pct,mean_test_sharpe,mean_test_win_rate_pct,mean_test_profit_factor
+5,"DLinear,FiLM,FreTS,LightTS,iTransformer",22,-8.09935113433917,54.29924362858682,-69.98811915029827,199.6910449789525,377.85936652140697,38.338188978251374,3.8228310546799404,46.55615542220502,0.944714829866641

@@ -1,0 +1,2 @@
+size,models,num_windows,mean_test_cumulative_return_pct,std_test_cumulative_return_pct,min_test_cumulative_return_pct,max_test_cumulative_return_pct,mean_test_annualized_return_pct,mean_test_max_drawdown_pct,mean_test_sharpe,mean_test_win_rate_pct,mean_test_profit_factor
+4,"DLinear,LightTS,TimeMixer,WPMixer",22,-16.234149451416958,34.83642967437574,-55.743750506854894,71.36149562007292,19.170198100393012,43.00266012611926,0.22608158738807316,45.696919049904,0.8139554173423896

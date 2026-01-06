@@ -1,0 +1,2 @@
+size,models,num_windows,mean_test_cumulative_return_pct,std_test_cumulative_return_pct,min_test_cumulative_return_pct,max_test_cumulative_return_pct,mean_test_annualized_return_pct,mean_test_max_drawdown_pct,mean_test_sharpe,mean_test_win_rate_pct,mean_test_profit_factor
+2,"LightTS,WPMixer",22,-21.018928983463823,32.75378557103489,-69.71199153662708,71.54044296104216,-4.709857196272523,42.251315725334344,-0.1480882431047174,45.043483450117,0.8033649370713566

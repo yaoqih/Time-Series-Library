@@ -1,0 +1,2 @@
+size,models,num_windows,mean_test_cumulative_return_pct,std_test_cumulative_return_pct,min_test_cumulative_return_pct,max_test_cumulative_return_pct,mean_test_annualized_return_pct,mean_test_max_drawdown_pct,mean_test_sharpe,mean_test_win_rate_pct,mean_test_profit_factor
+4,"FreTS,PatchTST,TimeMixer,iTransformer",22,5.983790497023744,56.65001029252783,-64.06215489205722,208.37370231887977,511.35293528463876,37.070531503231706,5.383443507162411,47.73554274653489,1.0749464257276944

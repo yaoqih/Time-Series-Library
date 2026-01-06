@@ -1,0 +1,14 @@
+{
+  "size": 5,
+  "models": "DLinear,LightTS,PatchTST,WPMixer,iTransformer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -1.1695941315807281,
+  "std_test_cumulative_return_pct": 69.52040731937181,
+  "min_test_cumulative_return_pct": -62.526491352545875,
+  "max_test_cumulative_return_pct": 287.3932834987874,
+  "mean_test_annualized_return_pct": 1099.5044761311356,
+  "mean_test_max_drawdown_pct": 38.37530737754172,
+  "mean_test_sharpe": 9.5120748188958,
+  "mean_test_win_rate_pct": 47.43691239813467,
+  "mean_test_profit_factor": 0.988627336554719
+}

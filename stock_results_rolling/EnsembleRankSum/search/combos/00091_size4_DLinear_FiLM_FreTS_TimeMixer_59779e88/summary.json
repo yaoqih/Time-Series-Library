@@ -1,0 +1,14 @@
+{
+  "size": 4,
+  "models": "DLinear,FiLM,FreTS,TimeMixer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -6.709557648349019,
+  "std_test_cumulative_return_pct": 45.58871554613234,
+  "min_test_cumulative_return_pct": -71.98899616564056,
+  "max_test_cumulative_return_pct": 142.0925695525732,
+  "mean_test_annualized_return_pct": 177.43830232936958,
+  "mean_test_max_drawdown_pct": 38.42567191387827,
+  "mean_test_sharpe": 2.203138377340125,
+  "mean_test_win_rate_pct": 46.04442265313101,
+  "mean_test_profit_factor": 0.9775763777881125
+}

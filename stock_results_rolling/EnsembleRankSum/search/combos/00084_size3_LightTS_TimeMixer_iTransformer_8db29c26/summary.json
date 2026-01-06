@@ -1,0 +1,14 @@
+{
+  "size": 3,
+  "models": "LightTS,TimeMixer,iTransformer",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -8.417149063599332,
+  "std_test_cumulative_return_pct": 53.052774783814876,
+  "min_test_cumulative_return_pct": -62.43637112521097,
+  "max_test_cumulative_return_pct": 173.6091762586216,
+  "mean_test_annualized_return_pct": 311.12291984152193,
+  "mean_test_max_drawdown_pct": 38.91854913473887,
+  "mean_test_sharpe": 3.715280214931836,
+  "mean_test_win_rate_pct": 47.95267463455503,
+  "mean_test_profit_factor": 0.950160479831234
+}

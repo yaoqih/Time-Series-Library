@@ -1,0 +1,14 @@
+{
+  "size": 1,
+  "models": "FreTS",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -1.3704218210317556,
+  "std_test_cumulative_return_pct": 65.21686185507991,
+  "min_test_cumulative_return_pct": -64.74825001470487,
+  "max_test_cumulative_return_pct": 241.1382394114654,
+  "mean_test_annualized_return_pct": 712.0469991615591,
+  "mean_test_max_drawdown_pct": 41.54625153525085,
+  "mean_test_sharpe": 4.939102972469967,
+  "mean_test_win_rate_pct": 44.33010857571172,
+  "mean_test_profit_factor": 0.9337934092108507
+}

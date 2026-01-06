@@ -1,0 +1,14 @@
+{
+  "size": 2,
+  "models": "LightTS,PatchTST",
+  "num_windows": 22,
+  "mean_test_cumulative_return_pct": -22.82858518712585,
+  "std_test_cumulative_return_pct": 29.820504098995073,
+  "min_test_cumulative_return_pct": -54.1671584390284,
+  "max_test_cumulative_return_pct": 48.799144879775355,
+  "mean_test_annualized_return_pct": -22.272520414431074,
+  "mean_test_max_drawdown_pct": 43.378168921881304,
+  "mean_test_sharpe": -0.29193359346524556,
+  "mean_test_win_rate_pct": 46.07593274391315,
+  "mean_test_profit_factor": 0.8023154905713313
+}
