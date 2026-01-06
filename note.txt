@@ -31,10 +31,14 @@ Chronos2、TiRex、Time-MoE
 交易天数	回测期间有交易的天数	评估模型的交易活跃度，结合胜率分析有效交易占比
 代码实现的过程应该简洁优雅高效。请帮我添加wandb来追踪训练和回测过程中各指标的变化
 streamlit run web/stock_backtest_app.py
-python scripts/stock/stock_rolling_backtest.py --devices 0 --parallel_windows --model  iTransformer
+PatchTST，WPMixer，TimeMixer，
+python scripts/stock/stock_rolling_backtest.py --batch_size 10240 --model FreTS --use_wandb --wandb_project tslib-roll-rank
+python scripts/stock/stock_rolling_backtest.py --batch_size 10240 --model WPMixer --use_wandb --wandb_project tslib-roll-rank
+python scripts/stock/stock_rolling_backtest.py --batch_size 10240 --model PatchTST --use_wandb --wandb_project tslib-roll-rank
+python scripts/stock/stock_rolling_backtest.py --batch_size 10240 --model iTransformer --use_wandb --wandb_project tslib-roll-rank
 
-python scripts/stock/stock_rolling_backtest.py --devices 0 --parallel_windows --model  LightTS --batch_size 2048
-python scripts/stock/stock_rolling_backtest.py --devices 0 --parallel_windows --model  DLinear --batch_size 2048
+python scripts/stock/stock_rolling_backtest.py --devices 0 --parallel_windows --model LightTS --batch_size 2048 
+python scripts/stock/stock_rolling_backtest.py --devices 0 --parallel_windows --model DLinear --batch_size 2048
 python scripts/stock/stock_rolling_backtest.py --devices 0,1,2,3,4,5,6 --parallel_windows --model  FiLM --batch_size 2048
   OMP_NUM_THREADS=1 python scripts/stock/stock_ensemble_backtest.py \
     --search \
