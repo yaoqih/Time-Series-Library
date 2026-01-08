@@ -75,6 +75,21 @@ def parse_date_range(start, end):
     return start_ts, end_ts
 
 
+def _parse_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, np.integer)):
+        return bool(int(value))
+    text = str(value).strip().lower()
+    if text in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    return default
+
+
 def _stock_process_group(payload):
     (
         code,
@@ -90,6 +105,7 @@ def _stock_process_group(payload):
         split_end,
         seq_len,
         pred_len,
+        strict_pred_end,
     ) = payload
 
     group = group.dropna(subset=cols + ['datetime'])
@@ -131,6 +147,19 @@ def _stock_process_group(payload):
             trade_idx = trade_idx[date_mask]
         if end_idx.size > 0:
             pred_idx = end_idx + pred_len
+            if strict_pred_end:
+                pred_mask = np.ones(len(pred_idx), dtype=bool)
+                if split_years_list:
+                    pred_mask &= np.isin(trade_years[pred_idx], split_years_list)
+                if split_start is not None or split_end is not None:
+                    pred_dates = pd.to_datetime(dates[pred_idx])
+                    if split_start is not None:
+                        pred_mask &= pred_dates >= split_start
+                    if split_end is not None:
+                        pred_mask &= pred_dates <= split_end
+                end_idx = end_idx[pred_mask]
+                trade_idx = trade_idx[pred_mask]
+                pred_idx = pred_idx[pred_mask]
             sample_index = [(code, int(idx)) for idx in end_idx]
             end_dates = dates[end_idx]
             trade_dates = dates[trade_idx]
@@ -167,6 +196,7 @@ def _stock_process_group_cached(payload):
         split_end,
         seq_len,
         pred_len,
+        strict_pred_end,
     ) = payload
 
     if data_all is None or len(data_all) == 0:
@@ -217,6 +247,19 @@ def _stock_process_group_cached(payload):
             trade_idx = trade_idx[date_mask]
         if end_idx.size > 0:
             pred_idx = end_idx + pred_len
+            if strict_pred_end:
+                pred_mask = np.ones(len(pred_idx), dtype=bool)
+                if split_years_list:
+                    pred_mask &= np.isin(trade_years[pred_idx], split_years_list)
+                if split_start is not None or split_end is not None:
+                    pred_dates = pd.to_datetime(dates[pred_idx])
+                    if split_start is not None:
+                        pred_mask &= pred_dates >= split_start
+                    if split_end is not None:
+                        pred_mask &= pred_dates <= split_end
+                end_idx = end_idx[pred_mask]
+                trade_idx = trade_idx[pred_mask]
+                pred_idx = pred_idx[pred_mask]
             sample_index = [(code, int(idx)) for idx in end_idx]
             end_dates = dates[end_idx]
             trade_dates = dates[trade_idx]
@@ -1105,6 +1148,7 @@ class Dataset_Stock(Dataset):
             getattr(args, 'val_start', None),
             getattr(args, 'val_end', None)
         )
+        self.strict_pred_end = _parse_bool(getattr(args, 'stock_strict_pred_end', None), default=True)
         self.sample_index = []
         self.sample_meta = []
         self.data_by_code = {}
@@ -1149,7 +1193,8 @@ class Dataset_Stock(Dataset):
             'val_years': sorted(self.val_years),
             'train_date_range': tuple(str(v) for v in self.train_date_range),
             'test_date_range': tuple(str(v) for v in self.test_date_range),
-            'val_date_range': tuple(str(v) for v in self.val_date_range)
+            'val_date_range': tuple(str(v) for v in self.val_date_range),
+            'strict_pred_end': bool(self.strict_pred_end),
         }
         raw = str(sorted(key_data.items())).encode('utf-8')
         return hashlib.md5(raw).hexdigest()
@@ -1413,6 +1458,7 @@ class Dataset_Stock(Dataset):
                     split_end,
                     self.seq_len,
                     self.pred_len,
+                    bool(self.strict_pred_end),
                 )
                 for code, payload in base_data_by_code.items()
             ]
@@ -1448,6 +1494,7 @@ class Dataset_Stock(Dataset):
                     split_end,
                     self.seq_len,
                     self.pred_len,
+                    bool(self.strict_pred_end),
                 ))
                 if result is None:
                     continue
@@ -1560,6 +1607,7 @@ class Dataset_StockPacked(Dataset):
             getattr(args, 'stock_pack_start', None),
             getattr(args, 'stock_pack_end', None)
         )
+        self.strict_pred_end = _parse_bool(getattr(args, 'stock_strict_pred_end', None), default=True)
         self.sample_index = []
         self.sample_meta = []
         self.feature_cols = []
@@ -1625,6 +1673,7 @@ class Dataset_StockPacked(Dataset):
             'pack_end': str(pack_end),
             'universe_size': int(getattr(self.args, 'stock_universe_size', 0) or 0),
             'fill_value': float(getattr(self.args, 'stock_pack_fill_value', 0.0)),
+            'strict_pred_end': bool(self.strict_pred_end),
         }
         raw = str(sorted(key_data.items())).encode('utf-8')
         return hashlib.md5(raw).hexdigest()
@@ -1993,6 +2042,19 @@ class Dataset_StockPacked(Dataset):
                 trade_idx = trade_idx[date_mask]
             if end_idx.size > 0:
                 pred_idx = end_idx + self.pred_len
+                if self.strict_pred_end:
+                    pred_mask = np.ones(len(pred_idx), dtype=bool)
+                    if split_years_list:
+                        pred_mask &= np.isin(trade_years[pred_idx], split_years_list)
+                    if split_start is not None or split_end is not None:
+                        pred_dates = pd.to_datetime(self.dates[pred_idx])
+                        if split_start is not None:
+                            pred_mask &= pred_dates >= split_start
+                        if split_end is not None:
+                            pred_mask &= pred_dates <= split_end
+                    end_idx = end_idx[pred_mask]
+                    trade_idx = trade_idx[pred_mask]
+                    pred_idx = pred_idx[pred_mask]
                 sample_index = [int(i) for i in end_idx]
                 end_dates = self.dates[end_idx]
                 trade_dates = self.dates[trade_idx]

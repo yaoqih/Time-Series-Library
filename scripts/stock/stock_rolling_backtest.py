@@ -147,7 +147,7 @@ def _window_tag(train_start, train_end, test_start, test_end, val_start, val_end
     )
 
 
-def _build_windows(start_date, end_date, train_years, test_months, val_months, step_months):
+def _build_windows(start_date, end_date, train_years, test_months, val_months, step_months, *, window_order: str):
     start = pd.Timestamp(start_date)
     end = pd.Timestamp(end_date)
     if pd.isna(start) or pd.isna(end):
@@ -161,6 +161,9 @@ def _build_windows(start_date, end_date, train_years, test_months, val_months, s
     test_offset = pd.DateOffset(months=test_months)
     val_offset = pd.DateOffset(months=val_months)
     step_offset = pd.DateOffset(months=step_months)
+    window_order = str(window_order or '').strip().lower()
+    if window_order not in {'train_test_val', 'train_val_test'}:
+        raise ValueError("window_order must be one of: train_val_test, train_test_val")
 
     windows = []
     idx = 0
@@ -168,10 +171,16 @@ def _build_windows(start_date, end_date, train_years, test_months, val_months, s
     one_day = pd.Timedelta(days=1)
     while True:
         train_end = train_start + train_offset - one_day
-        test_start = train_end + one_day
-        test_end = test_start + test_offset - one_day
-        val_start = test_end + one_day
-        val_end = val_start + val_offset - one_day
+        if window_order == 'train_val_test':
+            val_start = train_end + one_day
+            val_end = val_start + val_offset - one_day
+            test_start = val_end + one_day
+            test_end = test_start + test_offset - one_day
+        else:
+            test_start = train_end + one_day
+            test_end = test_start + test_offset - one_day
+            val_start = test_end + one_day
+            val_end = val_start + val_offset - one_day
 
         if test_end > end or val_end > end:
             break
@@ -589,6 +598,9 @@ def parse_args():
     parser.add_argument('--test_months', type=int, default=3, help='test window length in months')
     parser.add_argument('--val_months', type=int, default=3, help='validation window length in months')
     parser.add_argument('--step_months', type=int, default=6, help='rolling step in months')
+    parser.add_argument('--window_order', type=str, default='train_val_test',
+                        choices=['train_val_test', 'train_test_val'],
+                        help='rolling window order (train_val_test avoids lookahead for early stopping; train_test_val is legacy)')
     parser.add_argument('--max_windows', type=int, default=0, help='limit number of windows (0 = no limit)')
 
     parser.add_argument('--seq_len', type=int, default=64, help='input sequence length')
@@ -656,7 +668,7 @@ def parse_args():
     parser.add_argument('--commission', type=float, default=0.0003, help='commission rate')
     parser.add_argument('--stamp', type=float, default=0.001, help='stamp tax rate')
     parser.add_argument('--risk_free', type=float, default=0.03, help='risk free rate')
-    parser.add_argument('--stock_pack', action='store_true', default=False,
+    parser.add_argument('--stock_pack', action='store_true', default=True,
                         help="pack all stocks into one huge tensor; features='S' packs target only, otherwise packs base features + target")
     parser.add_argument('--stock_universe_size', type=int, default=0,
                         help='number of stocks to include when --stock_pack (0 = all codes with full coverage)')
@@ -665,9 +677,11 @@ def parse_args():
     parser.add_argument('--stock_pack_end', type=str, default=None,
                         help='packed calendar end (YYYY-MM-DD); default derived per rolling window')
     parser.add_argument('--stock_pack_extra_td', type=int, default=2,
-                        help='extra trading days after val_end for packed calendar end (in addition to pred_len-1)')
+                        help='extra trading days after max(test_end, val_end) for packed calendar end (in addition to pred_len-1)')
     parser.add_argument('--stock_pack_fill_value', type=float, default=0.0,
                         help='fill value for missing/invalid targets when --stock_pack')
+    parser.add_argument('--stock_strict_pred_end', type=_str2bool, nargs='?', const=True, default=True,
+                        help='require pred_date to also fall within the split range (prevents label leakage across train/val/test)')
     parser.add_argument('--stock_cache_dir', type=str, default='./cache', help='cache dir for stock preprocessing')
     parser.add_argument('--disable_stock_cache', action='store_true', default=False, help='disable stock cache')
     parser.add_argument('--stock_preprocess_workers', type=int, default=0,
@@ -735,7 +749,8 @@ def _run_window(base_args, model_name, window, use_window_seed=False):
         if not getattr(args_run, 'stock_pack_end', None):
             extra_td = int(getattr(args_run, 'stock_pack_extra_td', 3) or 0)
             lookahead = int(args_run.pred_len) - 1 + max(0, extra_td)
-            pack_end = _shift_by_trading_days(trade_cal, val_end, lookahead, ceil=False)
+            eval_end = max(test_end, val_end)
+            pack_end = _shift_by_trading_days(trade_cal, eval_end, lookahead, ceil=False)
             args_run.stock_pack_end = pack_end.strftime('%Y-%m-%d')
         else:
             extra_td = int(getattr(args_run, 'stock_pack_extra_td', 3) or 0)
@@ -757,6 +772,8 @@ def _run_window(base_args, model_name, window, use_window_seed=False):
         args_run.c_out = probe_dataset.c_in
 
     window_tag = _window_tag(train_start, train_end, test_start, test_end, val_start, val_end, idx)
+    strict_pred_end = bool(getattr(args_run, 'stock_strict_pred_end', True))
+    window_tag = f"{window_tag}_SL{int(strict_pred_end)}"
     if getattr(args_run, 'stock_pack', False):
         try:
             pk_start = pd.Timestamp(getattr(args_run, 'stock_pack_start', None))
@@ -994,7 +1011,8 @@ def main():
         args.train_years,
         args.test_months,
         args.val_months,
-        args.step_months
+        args.step_months,
+        window_order=args.window_order
     )
     if args.max_windows and args.max_windows > 0:
         windows = windows[:args.max_windows]

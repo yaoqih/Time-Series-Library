@@ -32,10 +32,10 @@ Chronos2、TiRex、Time-MoE
 代码实现的过程应该简洁优雅高效。请帮我添加wandb来追踪训练和回测过程中各指标的变化
 streamlit run web/stock_backtest_app.py
 PatchTST，WPMixer，TimeMixer，
-python scripts/stock/stock_rolling_backtest.py --batch_size 10240 --model FreTS --use_wandb --wandb_project tslib-roll-rank
-python scripts/stock/stock_rolling_backtest.py --batch_size 10240 --model WPMixer --use_wandb --wandb_project tslib-roll-rank
-python scripts/stock/stock_rolling_backtest.py --batch_size 10240 --model PatchTST --use_wandb --wandb_project tslib-roll-rank
-python scripts/stock/stock_rolling_backtest.py --batch_size 10240 --model iTransformer --use_wandb --wandb_project tslib-roll-rank
+python scripts/stock/stock_rolling_backtest.py --batch_size 2 --model FreTS --use_wandb --wandb_project tslib-roll-rank-pack --stock_pack --use_amp
+python scripts/stock/stock_rolling_backtest.py --batch_size 2 --model WPMixer --use_wandb --wandb_project tslib-roll-rank-pack --stock_pack --use_amp
+python scripts/stock/stock_rolling_backtest.py --batch_size 2 --model PatchTST --use_wandb --wandb_project tslib-roll-rank-pack --stock_pack --use_amp
+python scripts/stock/stock_rolling_backtest.py --batch_size 2 --model iTransformer --use_wandb --wandb_project tslib-roll-rank-pack --stock_pack --use_amp
 
 python scripts/stock/stock_rolling_backtest.py --devices 0 --parallel_windows --model LightTS --batch_size 2048 
 python scripts/stock/stock_rolling_backtest.py --devices 0 --parallel_windows --model DLinear --batch_size 2048
