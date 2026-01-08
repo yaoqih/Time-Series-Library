@@ -255,7 +255,16 @@ def _compute_sharpe_series(dates, capital, initial_cash, risk_free):
     return sharpe_values
 
 
-def backtest_topk_detailed(pred_df, initial_cash, topk, commission, stamp, risk_free):
+def backtest_topk_detailed(
+    pred_df,
+    initial_cash,
+    topk,
+    commission,
+    stamp,
+    risk_free,
+    *,
+    nan_true_return_policy: str = "drop",
+):
     if pred_df.empty:
         metrics = {
             'final_capital': float(initial_cash),
@@ -286,9 +295,35 @@ def backtest_topk_detailed(pred_df, initial_cash, topk, commission, stamp, risk_
         df['pred_date'] = pd.to_datetime(df['pred_date'])
     if 'end_date' in df.columns:
         df['end_date'] = pd.to_datetime(df['end_date'])
+    if 'exit_date' in df.columns:
+        df['exit_date'] = pd.to_datetime(df['exit_date'])
 
-    df = df.dropna(subset=['pred_return', 'true_return'])
-    df = df[np.isfinite(df['pred_return']) & np.isfinite(df['true_return'])]
+    nan_policy = str(nan_true_return_policy or "drop").strip().lower()
+    if nan_policy not in {"drop", "zero"}:
+        raise ValueError(f"nan_true_return_policy must be one of: drop, zero (got {nan_true_return_policy!r})")
+
+    df['pred_return'] = pd.to_numeric(df.get('pred_return'), errors='coerce')
+    df['true_return'] = pd.to_numeric(df.get('true_return'), errors='coerce')
+    df['pred_return'] = df['pred_return'].where(np.isfinite(df['pred_return']), np.nan)
+    df['true_return'] = df['true_return'].where(np.isfinite(df['true_return']), np.nan)
+
+    before_rows = int(len(df))
+    before_nan_true = int(df['true_return'].isna().sum()) if 'true_return' in df.columns else before_rows
+
+    df = df.dropna(subset=['pred_return'])
+    if nan_policy == "drop":
+        df = df.dropna(subset=['true_return'])
+    else:
+        df['true_return'] = df['true_return'].fillna(0.0)
+
+    after_rows = int(len(df))
+    if nan_policy == "drop" and before_nan_true > 0 and after_rows > 0:
+        dropped_pct = before_nan_true / max(1, before_rows) * 100.0
+        if dropped_pct >= 1.0:
+            print(
+                f"[warn] backtest dropped {before_nan_true}/{before_rows} rows ({dropped_pct:.2f}%) due to NaN true_return; "
+                f"this can be optimistic (implicit lookahead). Consider --backtest_nan_true_return=zero."
+            )
     df = df[df['true_return'] > -0.999]
     df = df[df['suspendFlag'] == 0]
     df = df.sort_values('trade_date')
@@ -299,6 +334,37 @@ def backtest_topk_detailed(pred_df, initial_cash, topk, commission, stamp, risk_
     all_trade_dates = df['trade_date'].drop_duplicates().sort_values()
     if all_trade_dates.empty:
         return backtest_topk_detailed(pd.DataFrame(), initial_cash, topk, commission, stamp, risk_free)
+
+    if 'exit_date' in df.columns:
+        # Warn if exit_date doesn't line up with next trade_date (common sign of multi-day horizon with daily compounding).
+        try:
+            exit_map = (
+                df[['trade_date', 'exit_date']]
+                  .dropna()
+                  .drop_duplicates()
+                  .groupby('trade_date', sort=True)['exit_date']
+                  .agg(lambda s: s.mode().iloc[0] if not s.mode().empty else s.iloc[0])
+            )
+            trade_dates_sorted = list(all_trade_dates)
+            mismatches = 0
+            checked = 0
+            for i in range(len(trade_dates_sorted) - 1):
+                td = pd.Timestamp(trade_dates_sorted[i])
+                expected_exit = pd.Timestamp(trade_dates_sorted[i + 1])
+                got_exit = exit_map.get(td)
+                if got_exit is None:
+                    continue
+                checked += 1
+                if pd.Timestamp(got_exit) != expected_exit:
+                    mismatches += 1
+            if checked > 0 and mismatches / checked >= 0.2:
+                print(
+                    f"[warn] exit_date != next trade_date for {mismatches}/{checked} trade days; "
+                    "current backtest compounds per trade_date (assumes ~1-day holding). "
+                    "If trade_horizon>2, results may be overstated."
+                )
+        except Exception:
+            pass
 
     picks = (
         df.sort_values(['trade_date', 'pred_return'], ascending=[True, False])
@@ -633,7 +699,7 @@ def parse_args():
     parser.add_argument('--freq', type=str, default='b', help='freq for time features encoding')
 
     parser.add_argument('--train_epochs', type=int, default=10, help='train epochs')
-    parser.add_argument('--batch_size', type=int, default=1024, help='batch size')
+    parser.add_argument('--batch_size', type=int, default=2, help='batch size')
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='learning rate')
     parser.add_argument('--loss', type=str, default='HYBRID_WIC', help='loss function (e.g., MSE, CCC)')
     parser.add_argument('--ic_weight_beta', type=float, default=5.0,
@@ -713,6 +779,10 @@ def parse_args():
                         help='parallel workers for stock preprocessing (0 = single process)')
     parser.add_argument('--stock_true_return_limit', type=float, default=None,
                         help='abs limit for true_return computed from open prices; default uses STOCK_RETURN_LIMIT')
+    parser.add_argument('--backtest_nan_true_return', type=str, default='drop',
+                        choices=['drop', 'zero'],
+                        help="backtest policy for NaN true_return: 'drop' (current, can be optimistic), "
+                             "'zero' (keep rows and assume 0 return)")
 
     parser.add_argument('--results_root', type=str, default='stock_results_rolling', help='results directory')
     parser.add_argument('--resume', type=_str2bool, nargs='?', const=True, default=True,
@@ -894,7 +964,8 @@ def _run_window(base_args, model_name, window, use_window_seed=False):
                 topk=args_run.topk,
                 commission=args_run.commission,
                 stamp=args_run.stamp,
-                risk_free=args_run.risk_free
+                risk_free=args_run.risk_free,
+                nan_true_return_policy=getattr(args_run, 'backtest_nan_true_return', 'drop')
             )
 
             split_dir = os.path.join(result_dir, split)
@@ -997,6 +1068,11 @@ def main():
         raise ValueError("trade_horizon must be >= 2 (2 = next-next open return)")
     if args.trade_horizon > args.pred_len:
         raise ValueError(f"trade_horizon ({args.trade_horizon}) must be <= pred_len ({args.pred_len})")
+    if args.trade_horizon != 2:
+        print(
+            "[warn] trade_horizon!=2 implies multi-day holding; current backtest compounds per trade_date "
+            "(assumes ~1-day holding) and may overstate results."
+        )
     if args.window_order == 'train_test_val':
         print("[warn] window_order=train_test_val uses future val after test for early stopping; prefer train_val_test.")
 
