@@ -1,4 +1,4 @@
-from data_provider.data_loader import Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom, Dataset_M4, Dataset_Stock, \
+from data_provider.data_loader import Dataset_ETT_hour, Dataset_ETT_minute, Dataset_Custom, Dataset_M4, Dataset_Stock, Dataset_StockPacked, \
     PSMSegLoader, MSLSegLoader, SMAPSegLoader, SMDSegLoader, SWATSegLoader, UEAloader
 from data_provider.uea import collate_fn
 from torch.utils.data import DataLoader
@@ -21,7 +21,10 @@ data_dict = {
 
 
 def data_provider(args, flag):
-    Data = data_dict[args.data]
+    if args.data == 'stock' and getattr(args, 'stock_pack', False):
+        Data = Dataset_StockPacked
+    else:
+        Data = data_dict[args.data]
     timeenc = 0 if args.embed != 'timeF' else 1
 
     shuffle_flag = False if (flag == 'test' or flag == 'TEST') else True

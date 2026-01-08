@@ -11,13 +11,14 @@ import pandas as pd
 import torch
 import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
+import hashlib
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
 import models as models_pkg
 
 from data_provider.data_factory import data_provider
-from data_provider.data_loader import Dataset_Stock
+from data_provider.data_loader import Dataset_Stock, Dataset_StockPacked
 from exp.exp_long_term_forecasting import Exp_Long_Term_Forecast
 from utils.wandb_utils import init_wandb, log_wandb, finish_wandb
 
@@ -25,6 +26,70 @@ ZERO_SHOT_MODELS = {
     'Chronos', 'Chronos2', 'Moirai', 'Sundial', 'TiRex', 'TimeMoE', 'TimesFM'
 }
 RANK_TARGETS = {'lag_return_rank', 'lag_return_cs_rank'}
+
+_STOCK_TRADE_CAL_CACHE = None
+
+
+def _load_stock_trade_calendar(args) -> pd.DatetimeIndex:
+    global _STOCK_TRADE_CAL_CACHE
+    if _STOCK_TRADE_CAL_CACHE is not None:
+        return _STOCK_TRADE_CAL_CACHE
+
+    data_fp = os.path.abspath(os.path.join(args.root_path, args.data_path))
+    if not os.path.exists(data_fp):
+        raise FileNotFoundError(f"stock data not found: {data_fp}")
+    cache_dir = getattr(args, 'stock_cache_dir', './cache')
+    os.makedirs(cache_dir, exist_ok=True)
+    mtime = os.path.getmtime(data_fp)
+    cache_key = hashlib.md5(f"{data_fp}|{mtime}".encode("utf-8")).hexdigest()
+    cache_fp = os.path.join(cache_dir, f"stock_trade_calendar_{cache_key}.npy")
+
+    if os.path.exists(cache_fp):
+        try:
+            dates = np.load(cache_fp, allow_pickle=False)
+            if dates is not None and len(dates) > 0:
+                cal = pd.DatetimeIndex(pd.to_datetime(dates)).sort_values().unique()
+                _STOCK_TRADE_CAL_CACHE = cal
+                return cal
+        except Exception:
+            pass
+
+    # Build from parquet time column (requires pyarrow/fastparquet).
+    df = pd.read_parquet(data_fp, columns=["time"])
+    ts = pd.to_datetime(df["time"], unit="ms", errors="coerce")
+    ts = ts.dropna()
+    if ts.empty:
+        raise ValueError("cannot build trade calendar from stock_data.parquet: no valid 'time'")
+    cal = pd.DatetimeIndex(ts.unique()).sort_values().unique()
+
+    try:
+        np.save(cache_fp, cal.values.astype('datetime64[ns]'), allow_pickle=False)
+    except Exception:
+        pass
+    _STOCK_TRADE_CAL_CACHE = cal
+    return cal
+
+
+def _shift_by_trading_days(cal: pd.DatetimeIndex, anchor: pd.Timestamp, offset: int, *, ceil: bool) -> pd.Timestamp:
+    if cal is None or len(cal) == 0:
+        raise ValueError("empty trade calendar")
+    anchor = pd.Timestamp(anchor)
+    if pd.isna(anchor):
+        raise ValueError("invalid anchor date")
+    if ceil:
+        base = int(cal.searchsorted(anchor, side="left"))
+        if base >= len(cal):
+            base = len(cal) - 1
+    else:
+        base = int(cal.searchsorted(anchor, side="right")) - 1
+        if base < 0:
+            base = 0
+    idx = base + int(offset)
+    if idx < 0:
+        idx = 0
+    if idx >= len(cal):
+        idx = len(cal) - 1
+    return pd.Timestamp(cal[idx])
 
 
 def build_setting(args, tag):
@@ -369,11 +434,13 @@ def predict_dataset(exp, data_set, data_loader, args):
     exp.model.eval()
     records = []
     offset = 0
+    packed = bool(getattr(data_set, 'packed', False))
+    need_true_open_return = getattr(args, 'target', '') in RANK_TARGETS
+
     open_pos = None
     open_scale = None
     open_mean = None
-    need_true_open_return = getattr(args, 'target', '') in RANK_TARGETS
-    if need_true_open_return:
+    if need_true_open_return and not packed:
         try:
             open_pos = data_set.feature_cols.index('open')
         except (AttributeError, ValueError):
@@ -401,48 +468,114 @@ def predict_dataset(exp, data_set, data_loader, args):
                 outputs = data_set.inverse_transform(outputs)
                 batch_y = data_set.inverse_transform(batch_y)
 
-            f_dim = -1 if args.features == 'MS' else 0
-            outputs = outputs[:, :, f_dim:]
-            batch_y = batch_y[:, :, f_dim:]
-            pred_step = outputs[:, -1, -1]
-            true_step = batch_y[:, -1, -1]
+            if packed:
+                target_slice = getattr(data_set, 'target_slice', None)
+                if target_slice and isinstance(target_slice, (list, tuple)) and len(target_slice) == 2:
+                    target_start, target_end = int(target_slice[0]), int(target_slice[1])
+                else:
+                    n_codes = int(getattr(data_set, 'n_codes', 0) or len(getattr(data_set, 'universe_codes', []) or []))
+                    n_groups = int(getattr(data_set, 'n_groups', 0) or 1)
+                    target_start, target_end = (n_groups - 1) * n_codes, n_groups * n_codes
 
-            for i in range(len(pred_step)):
-                meta = data_set.sample_meta[offset + i]
-                true_return = float(true_step[i])
-                if need_true_open_return:
-                    code, end_idx = data_set.sample_index[offset + i]
-                    trade_idx = int(end_idx) + 1
-                    pred_idx = int(end_idx) + int(args.pred_len)
-                    payload = data_set.data_by_code.get(code)
-                    if payload is None or open_pos is None:
-                        true_return = float('nan')
+                outputs_t = outputs[:, :, target_start:target_end]
+                batch_y_t = batch_y[:, :, target_start:target_end]
+
+                pred_step = outputs_t[:, -1, :]  # [B, n_codes]
+                true_step = batch_y_t[:, -1, :]  # [B, n_codes]
+                codes = getattr(data_set, 'universe_codes', None)
+                if not codes:
+                    raise ValueError("packed dataset missing universe_codes")
+                open_mat = getattr(data_set, 'open', None)
+                suspend_mat = getattr(data_set, 'suspend', None)
+                dates = getattr(data_set, 'dates', None)
+                if dates is None:
+                    raise ValueError("packed dataset missing dates")
+
+                for i in range(pred_step.shape[0]):
+                    end_idx = int(data_set.sample_index[offset + i])
+                    trade_idx = end_idx + 1
+                    pred_idx = end_idx + int(args.pred_len)
+                    meta = data_set.sample_meta[offset + i]
+
+                    if need_true_open_return:
+                        if open_mat is None:
+                            raise ValueError("packed dataset missing open matrix required for true return")
+                        open_trade = open_mat[trade_idx]
+                        open_pred = open_mat[pred_idx]
+                        with np.errstate(divide='ignore', invalid='ignore'):
+                            true_ret = open_pred / open_trade - 1.0
+                        true_ret = np.where((open_trade > 0) & (open_pred > 0), true_ret, np.nan)
                     else:
-                        data = payload['data']
-                        open_trade = float(data[trade_idx, open_pos])
-                        open_pred = float(data[pred_idx, open_pos])
-                        if open_scale is not None and open_mean is not None:
-                            open_trade = open_trade * open_scale + open_mean
-                            open_pred = open_pred * open_scale + open_mean
-                        if open_trade > 0 and open_pred > 0:
-                            true_return = open_pred / open_trade - 1.0
-                        else:
+                        true_ret = true_step[i]
+
+                    suspend_flags = suspend_mat[trade_idx] if suspend_mat is not None else np.zeros(len(codes), dtype=int)
+                    preds = pred_step[i]
+                    for j, code in enumerate(codes):
+                        records.append({
+                            'code': code,
+                            'end_date': meta['end_date'],
+                            'trade_date': meta['trade_date'],
+                            'pred_date': meta['pred_date'],
+                            'suspendFlag': int(suspend_flags[j]),
+                            'pred_return': float(preds[j]),
+                            'true_return': float(true_ret[j]) if np.isfinite(true_ret[j]) else float('nan'),
+                        })
+                offset += pred_step.shape[0]
+            else:
+                f_dim = -1 if args.features == 'MS' else 0
+                outputs = outputs[:, :, f_dim:]
+                batch_y = batch_y[:, :, f_dim:]
+                pred_step = outputs[:, -1, -1]
+                true_step = batch_y[:, -1, -1]
+
+                for i in range(len(pred_step)):
+                    meta = data_set.sample_meta[offset + i]
+                    true_return = float(true_step[i])
+                    if need_true_open_return:
+                        code, end_idx = data_set.sample_index[offset + i]
+                        trade_idx = int(end_idx) + 1
+                        pred_idx = int(end_idx) + int(args.pred_len)
+                        payload = data_set.data_by_code.get(code)
+                        if payload is None or open_pos is None:
                             true_return = float('nan')
-                records.append({
-                    'code': meta['code'],
-                    'end_date': meta['end_date'],
-                    'trade_date': meta['trade_date'],
-                    'pred_date': meta['pred_date'],
-                    'suspendFlag': meta['suspendFlag'],
-                    'pred_return': float(pred_step[i]),
-                    'true_return': float(true_return)
-                })
-            offset += len(pred_step)
+                        else:
+                            data = payload['data']
+                            open_trade = float(data[trade_idx, open_pos])
+                            open_pred = float(data[pred_idx, open_pos])
+                            if open_scale is not None and open_mean is not None:
+                                open_trade = open_trade * open_scale + open_mean
+                                open_pred = open_pred * open_scale + open_mean
+                            if open_trade > 0 and open_pred > 0:
+                                true_return = open_pred / open_trade - 1.0
+                            else:
+                                true_return = float('nan')
+                    records.append({
+                        'code': meta['code'],
+                        'end_date': meta['end_date'],
+                        'trade_date': meta['trade_date'],
+                        'pred_date': meta['pred_date'],
+                        'suspendFlag': meta['suspendFlag'],
+                        'pred_return': float(pred_step[i]),
+                        'true_return': float(true_return)
+                    })
+                offset += len(pred_step)
     return pd.DataFrame.from_records(records)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Rolling stock backtest runner')
+
+    def _str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if v is None:
+            return True
+        text = str(v).strip().lower()
+        if text in {'1', 'true', 't', 'yes', 'y', 'on'}:
+            return True
+        if text in {'0', 'false', 'f', 'no', 'n', 'off'}:
+            return False
+        raise argparse.ArgumentTypeError(f"invalid boolean value: {v!r}")
 
     parser.add_argument('--root_path', type=str, default='.', help='root path of the data file')
     parser.add_argument('--data_path', type=str, default='stock_data.parquet', help='data file')
@@ -468,7 +601,11 @@ def parse_args():
     parser.add_argument('--train_epochs', type=int, default=10, help='train epochs')
     parser.add_argument('--batch_size', type=int, default=1024, help='batch size')
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='learning rate')
-    parser.add_argument('--loss', type=str, default='CCC', help='loss function (e.g., MSE, CCC)')
+    parser.add_argument('--loss', type=str, default='HYBRID_WIC', help='loss function (e.g., MSE, CCC)')
+    parser.add_argument('--ic_weight_beta', type=float, default=5.0,
+                        help='beta for Weighted IC loss softmax weighting')
+    parser.add_argument('--hybrid_ic_weight', type=float, default=0.7,
+                        help='IC weight for Hybrid loss (ic_weight * IC + (1-ic_weight) * CCC)')
     parser.add_argument('--patience', type=int, default=3, help='early stopping patience')
     parser.add_argument('--num_workers', type=int, default=4, help='data loader workers')
     parser.add_argument('--persistent_workers', action='store_true', default=True,
@@ -502,7 +639,7 @@ def parse_args():
     parser.add_argument('--p_hidden_layers', type=int, default=2,
                         help='number of hidden layers in projector')
 
-    parser.add_argument('--use_gpu', type=bool, default=True, help='use gpu')
+    parser.add_argument('--use_gpu', type=_str2bool, nargs='?', const=True, default=True, help='use gpu')
     parser.add_argument('--gpu', type=int, default=0, help='gpu id')
     parser.add_argument('--gpu_type', type=str, default='cuda', help='gpu type')
     parser.add_argument('--use_multi_gpu', action='store_true', default=False, help='use multiple gpus')
@@ -519,14 +656,26 @@ def parse_args():
     parser.add_argument('--commission', type=float, default=0.0003, help='commission rate')
     parser.add_argument('--stamp', type=float, default=0.001, help='stamp tax rate')
     parser.add_argument('--risk_free', type=float, default=0.03, help='risk free rate')
+    parser.add_argument('--stock_pack', action='store_true', default=False,
+                        help="pack all stocks into one huge tensor; features='S' packs target only, otherwise packs base features + target")
+    parser.add_argument('--stock_universe_size', type=int, default=0,
+                        help='number of stocks to include when --stock_pack (0 = all codes with full coverage)')
+    parser.add_argument('--stock_pack_start', type=str, default=None,
+                        help='packed calendar start (YYYY-MM-DD); default derived per rolling window')
+    parser.add_argument('--stock_pack_end', type=str, default=None,
+                        help='packed calendar end (YYYY-MM-DD); default derived per rolling window')
+    parser.add_argument('--stock_pack_extra_td', type=int, default=2,
+                        help='extra trading days after val_end for packed calendar end (in addition to pred_len-1)')
+    parser.add_argument('--stock_pack_fill_value', type=float, default=0.0,
+                        help='fill value for missing/invalid targets when --stock_pack')
     parser.add_argument('--stock_cache_dir', type=str, default='./cache', help='cache dir for stock preprocessing')
     parser.add_argument('--disable_stock_cache', action='store_true', default=False, help='disable stock cache')
     parser.add_argument('--stock_preprocess_workers', type=int, default=0,
                         help='parallel workers for stock preprocessing (0 = single process)')
 
     parser.add_argument('--results_root', type=str, default='stock_results_rolling', help='results directory')
-    parser.add_argument('--resume', action='store_true', default=True,
-                        help='skip training/eval if outputs already exist')
+    parser.add_argument('--resume', type=_str2bool, nargs='?', const=True, default=True,
+                        help='skip training/eval if outputs already exist (set False to re-run)')
 
     parser.add_argument('--use_wandb', action='store_true', default=False, help='use wandb')
     parser.add_argument('--no_wandb', action='store_true', default=False, help='disable wandb logging')
@@ -578,7 +727,51 @@ def _run_window(base_args, model_name, window, use_window_seed=False):
         args_run.d_layers = args_run.e_layers
     _adjust_segrnn_seg_len(args_run)
 
+    if getattr(args_run, 'stock_pack', False):
+        trade_cal = _load_stock_trade_calendar(args_run)
+        if not getattr(args_run, 'stock_pack_start', None):
+            pack_start = _shift_by_trading_days(trade_cal, train_start, -int(args_run.seq_len), ceil=True)
+            args_run.stock_pack_start = pack_start.strftime('%Y-%m-%d')
+        if not getattr(args_run, 'stock_pack_end', None):
+            extra_td = int(getattr(args_run, 'stock_pack_extra_td', 3) or 0)
+            lookahead = int(args_run.pred_len) - 1 + max(0, extra_td)
+            pack_end = _shift_by_trading_days(trade_cal, val_end, lookahead, ceil=False)
+            args_run.stock_pack_end = pack_end.strftime('%Y-%m-%d')
+        else:
+            extra_td = int(getattr(args_run, 'stock_pack_extra_td', 3) or 0)
+
+        probe_dataset = Dataset_StockPacked(
+            args_run,
+            root_path=args_run.root_path,
+            flag='train',
+            size=[args_run.seq_len, args_run.label_len, args_run.pred_len],
+            features=args_run.features,
+            data_path=args_run.data_path,
+            target=args_run.target,
+            scale=True,
+            timeenc=0 if args_run.embed != 'timeF' else 1,
+            freq=args_run.freq
+        )
+        args_run.enc_in = probe_dataset.c_in
+        args_run.dec_in = probe_dataset.c_in
+        args_run.c_out = probe_dataset.c_in
+
     window_tag = _window_tag(train_start, train_end, test_start, test_end, val_start, val_end, idx)
+    if getattr(args_run, 'stock_pack', False):
+        try:
+            pk_start = pd.Timestamp(getattr(args_run, 'stock_pack_start', None))
+            pk_end = pd.Timestamp(getattr(args_run, 'stock_pack_end', None))
+        except Exception:
+            pk_start = None
+            pk_end = None
+        fill = float(getattr(args_run, 'stock_pack_fill_value', 0.0))
+        fill_str = f"{fill:g}".replace('-', 'm').replace('.', 'p')
+        n_codes = int(getattr(probe_dataset, 'n_codes', 0) or 0)
+        n_groups = int(getattr(probe_dataset, 'n_groups', 0) or 0)
+        date_str = ""
+        if pk_start is not None and pk_end is not None and not (pd.isna(pk_start) or pd.isna(pk_end)):
+            date_str = f"_pk{pk_start:%Y%m%d}-{pk_end:%Y%m%d}"
+        window_tag = f"{window_tag}{date_str}_N{n_codes}_G{n_groups}_E{int(extra_td)}_F{fill_str}"
     setting = build_setting(args_run, window_tag)
     checkpoint_path = os.path.join(args_run.checkpoints, setting, 'checkpoint.pth')
     result_dir = os.path.join(args_run.results_root, model_name, window_tag)
@@ -764,31 +957,32 @@ def main():
 
     overall_start = pd.Timestamp(args.start_date)
     overall_end = pd.Timestamp(args.end_date)
-    probe_args = copy.deepcopy(args)
-    probe_args.train_years = _years_spec(overall_start, overall_end)
-    probe_args.test_years = probe_args.train_years
-    probe_args.val_years = probe_args.train_years
-    probe_args.train_start = None
-    probe_args.train_end = None
-    probe_args.test_start = None
-    probe_args.test_end = None
-    probe_args.val_start = None
-    probe_args.val_end = None
-    probe_dataset = Dataset_Stock(
-        probe_args,
-        root_path=args.root_path,
-        flag='train',
-        size=[args.seq_len, args.label_len, args.pred_len],
-        features=args.features,
-        data_path=args.data_path,
-        target=args.target,
-        scale=True,
-        timeenc=0,
-        freq=args.freq
-    )
-    args.enc_in = probe_dataset.c_in
-    args.dec_in = probe_dataset.c_in
-    args.c_out = probe_dataset.c_in
+    if not getattr(args, 'stock_pack', False):
+        probe_args = copy.deepcopy(args)
+        probe_args.train_years = _years_spec(overall_start, overall_end)
+        probe_args.test_years = probe_args.train_years
+        probe_args.val_years = probe_args.train_years
+        probe_args.train_start = None
+        probe_args.train_end = None
+        probe_args.test_start = None
+        probe_args.test_end = None
+        probe_args.val_start = None
+        probe_args.val_end = None
+        probe_dataset = Dataset_Stock(
+            probe_args,
+            root_path=args.root_path,
+            flag='train',
+            size=[args.seq_len, args.label_len, args.pred_len],
+            features=args.features,
+            data_path=args.data_path,
+            target=args.target,
+            scale=True,
+            timeenc=0 if probe_args.embed != 'timeF' else 1,
+            freq=args.freq
+        )
+        args.enc_in = probe_dataset.c_in
+        args.dec_in = probe_dataset.c_in
+        args.c_out = probe_dataset.c_in
 
     model_name = normalize_model_name(args.model)
     if not _model_available(model_name):

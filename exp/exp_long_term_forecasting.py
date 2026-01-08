@@ -12,7 +12,7 @@ import numpy as np
 from utils.dtw_metric import dtw, accelerated_dtw
 from utils.augmentation import run_augmentation, run_augmentation_single
 from utils.wandb_utils import log_wandb
-from utils.losses import CCCLoss
+from utils.losses import CCCLoss, ICLoss, WeightedICLoss, HybridICCCLoss
 
 warnings.filterwarnings('ignore')
 
@@ -20,6 +20,26 @@ warnings.filterwarnings('ignore')
 class Exp_Long_Term_Forecast(Exp_Basic):
     def __init__(self, args):
         super(Exp_Long_Term_Forecast, self).__init__(args)
+
+    def _slice_for_stock_pack(self, outputs, batch_y, data_set):
+        if getattr(self.args, 'data', '') != 'stock' or not getattr(self.args, 'stock_pack', False):
+            return None
+        if not getattr(data_set, 'packed', False):
+            return None
+        target_slice = getattr(data_set, 'target_slice', None)
+        if target_slice and isinstance(target_slice, (list, tuple)) and len(target_slice) == 2:
+            start, end = target_slice
+        else:
+            n_codes = int(getattr(data_set, 'n_codes', 0) or len(getattr(data_set, 'universe_codes', []) or []))
+            n_groups = int(getattr(data_set, 'n_groups', 0) or 1)
+            start, end = (n_groups - 1) * n_codes, n_groups * n_codes
+        start = int(start)
+        end = int(end)
+        if end <= start:
+            raise ValueError("invalid target_slice for packed stock dataset")
+        outputs = outputs[:, -self.args.pred_len:, start:end]
+        batch_y = batch_y[:, -self.args.pred_len:, start:end]
+        return outputs, batch_y
 
     def _build_model(self):
         model = self.model_dict[self.args.model].Model(self.args).float()
@@ -44,6 +64,24 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             return nn.L1Loss()
         if loss_name in {'CCC', 'CCCL'}:
             return CCCLoss()
+        if loss_name in {'IC', 'ICL', 'ICLOSS'}:
+            ic_dim = -1 if (getattr(self.args, 'data', '') == 'stock' and getattr(self.args, 'stock_pack', False)) else 0
+            return ICLoss(dim=ic_dim)
+        if loss_name in {'WIC', 'WICL', 'WEIGHTEDIC', 'WEIGHTED_IC', 'WEIGHTEDICLOSS'}:
+            ic_dim = -1 if (getattr(self.args, 'data', '') == 'stock' and getattr(self.args, 'stock_pack', False)) else 0
+            beta = float(getattr(self.args, 'ic_weight_beta', 5.0))
+            return WeightedICLoss(dim=ic_dim, beta=beta)
+        if loss_name in {'HYBRID', 'HYBRID_IC_CCC', 'IC_CCC'}:
+            ic_dim = -1 if (getattr(self.args, 'data', '') == 'stock' and getattr(self.args, 'stock_pack', False)) else 0
+            ic_weight = float(getattr(self.args, 'hybrid_ic_weight', 0.7))
+            ic_weight = max(0.0, min(1.0, ic_weight))
+            return HybridICCCLoss(ic_weight=ic_weight, ic_loss=ICLoss(dim=ic_dim))
+        if loss_name in {'HYBRID_WIC', 'HYBRID_WIC_CCC', 'WIC_CCC'}:
+            ic_dim = -1 if (getattr(self.args, 'data', '') == 'stock' and getattr(self.args, 'stock_pack', False)) else 0
+            ic_weight = float(getattr(self.args, 'hybrid_ic_weight', 0.7))
+            ic_weight = max(0.0, min(1.0, ic_weight))
+            beta = float(getattr(self.args, 'ic_weight_beta', 5.0))
+            return HybridICCCLoss(ic_weight=ic_weight, ic_loss=WeightedICLoss(dim=ic_dim, beta=beta))
         print(f"[warn] unknown loss '{loss_name}', fallback to MSE")
         return nn.MSELoss()
  
@@ -68,9 +106,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 else:
                     outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                f_dim = -1 if self.args.features == 'MS' else 0
-                outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                sliced = self._slice_for_stock_pack(outputs, batch_y, vali_data)
+                if sliced is None:
+                    f_dim = -1 if self.args.features == 'MS' else 0
+                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                    batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                else:
+                    outputs, batch_y = sliced
+                    batch_y = batch_y.to(self.device)
 
                 pred = outputs.detach()
                 true = batch_y.detach()
@@ -125,17 +168,27 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     with torch.cuda.amp.autocast():
                         outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
 
-                        f_dim = -1 if self.args.features == 'MS' else 0
-                        outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                        batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                        sliced = self._slice_for_stock_pack(outputs, batch_y, train_data)
+                        if sliced is None:
+                            f_dim = -1 if self.args.features == 'MS' else 0
+                            outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                            batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                        else:
+                            outputs, batch_y = sliced
+                            batch_y = batch_y.to(self.device)
                         loss = criterion(outputs, batch_y)
                         train_loss.append(loss.item())
                 else:
                     outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
 
-                    f_dim = -1 if self.args.features == 'MS' else 0
-                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                    batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                    sliced = self._slice_for_stock_pack(outputs, batch_y, train_data)
+                    if sliced is None:
+                        f_dim = -1 if self.args.features == 'MS' else 0
+                        outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                        batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                    else:
+                        outputs, batch_y = sliced
+                        batch_y = batch_y.to(self.device)
                     loss = criterion(outputs, batch_y)
                     train_loss.append(loss.item())
 

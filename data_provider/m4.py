@@ -23,7 +23,10 @@ from glob import glob
 
 import numpy as np
 import pandas as pd
-import patoolib
+try:
+    import patoolib  # noqa: F401
+except ImportError:  # optional dependency for archive extraction
+    patoolib = None
 from tqdm import tqdm
 import logging
 import os

@@ -113,3 +113,94 @@ class CCCLoss(nn.Module):
         ccc = (2.0 * cov) / (denom + self.eps)
         ccc = t.where(denom < self.eps, t.ones_like(ccc), ccc)
         return 1.0 - ccc
+
+
+class ICLoss(nn.Module):
+    """Information Coefficient (Pearson corr) loss.
+
+    Computes correlation along `dim` (e.g., cross-sectional dim) and returns `1 - mean(ic)`.
+    """
+
+    def __init__(self, dim: int = -1, eps: float = 1e-8):
+        super().__init__()
+        self.dim = dim
+        self.eps = eps
+
+    def forward(self, pred: t.Tensor, target: t.Tensor) -> t.Tensor:
+        pred = pred.float()
+        target = target.float()
+        if pred.shape != target.shape:
+            raise ValueError(f"ICLoss expects pred/target same shape, got {pred.shape} vs {target.shape}")
+
+        mean_pred = pred.mean(dim=self.dim, keepdim=True)
+        mean_target = target.mean(dim=self.dim, keepdim=True)
+        pred_centered = pred - mean_pred
+        target_centered = target - mean_target
+
+        cov = (pred_centered * target_centered).mean(dim=self.dim)
+        var_pred = (pred_centered ** 2).mean(dim=self.dim)
+        var_target = (target_centered ** 2).mean(dim=self.dim)
+        denom = (var_pred.sqrt() * var_target.sqrt()) + self.eps
+        corr = cov / denom
+        corr = t.where((var_pred < self.eps) | (var_target < self.eps), t.zeros_like(corr), corr)
+
+        ic = corr.mean()
+        return 1.0 - ic
+
+
+class WeightedICLoss(nn.Module):
+    """Weighted Information Coefficient loss.
+
+    Weights are computed from `target` to emphasize high-return samples (e.g., winners).
+    Default uses softmax(beta * target) along `dim`.
+    """
+
+    def __init__(self, dim: int = -1, beta: float = 5.0, eps: float = 1e-8):
+        super().__init__()
+        self.dim = dim
+        self.beta = float(beta)
+        self.eps = eps
+
+    def forward(self, pred: t.Tensor, target: t.Tensor) -> t.Tensor:
+        pred = pred.float()
+        target = target.float()
+        if pred.shape != target.shape:
+            raise ValueError(f"WeightedICLoss expects pred/target same shape, got {pred.shape} vs {target.shape}")
+
+        weights = t.softmax(self.beta * target.detach(), dim=self.dim)
+        weights = weights / (weights.sum(dim=self.dim, keepdim=True) + self.eps)
+
+        mean_pred = (weights * pred).sum(dim=self.dim, keepdim=True)
+        mean_target = (weights * target).sum(dim=self.dim, keepdim=True)
+        pred_centered = pred - mean_pred
+        target_centered = target - mean_target
+
+        cov = (weights * pred_centered * target_centered).sum(dim=self.dim)
+        var_pred = (weights * (pred_centered ** 2)).sum(dim=self.dim)
+        var_target = (weights * (target_centered ** 2)).sum(dim=self.dim)
+        denom = (var_pred.sqrt() * var_target.sqrt()) + self.eps
+        corr = cov / denom
+        corr = t.where((var_pred < self.eps) | (var_target < self.eps), t.zeros_like(corr), corr)
+
+        ic = corr.mean()
+        return 1.0 - ic
+
+
+class HybridICCCLoss(nn.Module):
+    """Hybrid loss: ic_weight * IC + (1-ic_weight) * CCC, both in loss form."""
+
+    def __init__(
+        self,
+        ic_weight: float = 0.7,
+        ic_loss: nn.Module | None = None,
+        eps: float = 1e-8,
+    ):
+        super().__init__()
+        self.ic_weight = float(ic_weight)
+        self.ic_loss = ic_loss if ic_loss is not None else ICLoss(dim=-1, eps=eps)
+        self.ccc_loss = CCCLoss(eps=eps)
+
+    def forward(self, pred: t.Tensor, target: t.Tensor) -> t.Tensor:
+        ic = self.ic_loss(pred, target)
+        ccc = self.ccc_loss(pred, target)
+        return self.ic_weight * ic + (1.0 - self.ic_weight) * ccc

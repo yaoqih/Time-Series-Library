@@ -12,16 +12,26 @@ import multiprocessing as mp
 from utils.timefeatures import time_features
 from data_provider.m4 import M4Dataset, M4Meta
 from data_provider.uea import subsample, interpolate_missing, Normalizer
-from sktime.datasets import load_from_tsfile_to_dataframe
+try:
+    from sktime.datasets import load_from_tsfile_to_dataframe
+except ImportError:  # optional dependency (UEA datasets)
+    load_from_tsfile_to_dataframe = None
 import warnings
 from utils.augmentation import run_augmentation_single
-from datasets import load_dataset
-from huggingface_hub import hf_hub_download
+try:
+    from datasets import load_dataset
+except ImportError:  # optional dependency (HF datasets)
+    load_dataset = None
+try:
+    from huggingface_hub import hf_hub_download
+except ImportError:  # optional dependency (HF datasets)
+    hf_hub_download = None
 warnings.filterwarnings('ignore')
 
 HUGGINGFACE_REPO = "thuml/Time-Series-Library"
 STOCK_CACHE_VERSION = "chaining_v2_clip30"
 STOCK_BASE_CACHE_VERSION = "base_v2_clip30"
+STOCK_PACKED_CACHE_VERSION = "packed_v2_union_multifeat"
 STOCK_RETURN_LIMIT = 0.30
 _STOCK_BASE_MEM_CACHE = {}
 
@@ -1487,4 +1497,581 @@ class Dataset_Stock(Dataset):
             mean = self.scaler.mean_[self.target_idx]
             scale = self.scaler.scale_[self.target_idx]
             return data * scale + mean
+        return data
+
+
+class Dataset_StockPacked(Dataset):
+    """Pack all stocks into one huge tensor (channels = stocks) to learn cross-stock signals.
+
+    Supports:
+    - features='S': target-only, channels = stocks
+    - features!='S': multi-feature, channels = feature_groups * stocks, where groups follow base feature order + target
+      and the last block is always the target (size = stocks), making it easy to slice for IC/CCC losses.
+    """
+
+    def __init__(
+        self,
+        args,
+        root_path,
+        flag='train',
+        size=None,
+        features='S',
+        data_path='stock_data.parquet',
+        target='lag_return',
+        scale=True,
+        timeenc=0,
+        freq='b',
+        seasonal_patterns=None,
+    ):
+        self.args = args
+        if size is None:
+            self.seq_len = 64
+            self.label_len = 1
+            self.pred_len = 2
+        else:
+            self.seq_len = size[0]
+            self.label_len = size[1]
+            self.pred_len = size[2]
+        assert flag in ['train', 'test', 'val']
+        self.flag = flag
+        self.features = features
+        self.target = target
+        self.scale = scale
+        self.timeenc = timeenc
+        self.freq = freq
+        self.root_path = root_path
+        self.data_path = data_path
+        self.train_years = parse_years_spec(getattr(args, 'train_years', '2014-2023'))
+        self.test_years = parse_years_spec(getattr(args, 'test_years', '2024'))
+        self.val_years = parse_years_spec(getattr(args, 'val_years', '2025'))
+        self.train_date_range = parse_date_range(
+            getattr(args, 'train_start', None),
+            getattr(args, 'train_end', None)
+        )
+        self.test_date_range = parse_date_range(
+            getattr(args, 'test_start', None),
+            getattr(args, 'test_end', None)
+        )
+        self.val_date_range = parse_date_range(
+            getattr(args, 'val_start', None),
+            getattr(args, 'val_end', None)
+        )
+        self.pack_date_range = parse_date_range(
+            getattr(args, 'stock_pack_start', None),
+            getattr(args, 'stock_pack_end', None)
+        )
+        self.sample_index = []
+        self.sample_meta = []
+        self.feature_cols = []
+        self.pack_feature_cols = []
+        self.universe_codes = []
+        self.c_in = 0
+        self.n_codes = 0
+        self.n_groups = 0
+        self.target_slice = None
+        self.packed = True
+        self.__read_data__()
+
+    def _build_datetime(self, df, time_col):
+        time_series = df[time_col]
+        return pd.to_datetime(time_series, unit='ms', errors='coerce')
+
+    def _select_split_years(self):
+        if self.flag == 'train':
+            return self.train_years
+        if self.flag == 'test':
+            return self.test_years
+        return self.val_years
+
+    def _select_split_date_range(self):
+        if self.flag == 'train':
+            return self.train_date_range
+        if self.flag == 'test':
+            return self.test_date_range
+        return self.val_date_range
+
+    def _base_cache_key(self, data_path):
+        key_data = {
+            'data_path': os.path.abspath(data_path),
+            'mtime': os.path.getmtime(data_path),
+            'target': self.target,
+            'cache_version': STOCK_BASE_CACHE_VERSION
+        }
+        raw = str(sorted(key_data.items())).encode('utf-8')
+        return hashlib.md5(raw).hexdigest()
+
+    def _packed_cache_key(self, data_path):
+        pack_start, pack_end = self.pack_date_range
+        key_data = {
+            'data_path': os.path.abspath(data_path),
+            'mtime': os.path.getmtime(data_path),
+            'cache_version': STOCK_PACKED_CACHE_VERSION,
+            'seq_len': self.seq_len,
+            'label_len': self.label_len,
+            'pred_len': self.pred_len,
+            'flag': self.flag,
+            'features': self.features,
+            'target': self.target,
+            'scale': self.scale,
+            'timeenc': self.timeenc,
+            'freq': self.freq,
+            'train_years': sorted(self.train_years),
+            'test_years': sorted(self.test_years),
+            'val_years': sorted(self.val_years),
+            'train_date_range': tuple(str(v) for v in self.train_date_range),
+            'test_date_range': tuple(str(v) for v in self.test_date_range),
+            'val_date_range': tuple(str(v) for v in self.val_date_range),
+            'pack_start': str(pack_start),
+            'pack_end': str(pack_end),
+            'universe_size': int(getattr(self.args, 'stock_universe_size', 0) or 0),
+            'fill_value': float(getattr(self.args, 'stock_pack_fill_value', 0.0)),
+        }
+        raw = str(sorted(key_data.items())).encode('utf-8')
+        return hashlib.md5(raw).hexdigest()
+
+    def _base_cache_path(self, data_path):
+        cache_dir = getattr(self.args, 'stock_cache_dir', './cache')
+        return os.path.join(cache_dir, f"stock_base_{self._base_cache_key(data_path)}.pkl")
+
+    def _packed_cache_path(self, data_path):
+        cache_dir = getattr(self.args, 'stock_cache_dir', './cache')
+        return os.path.join(cache_dir, f"stock_packed_{self._packed_cache_key(data_path)}.pkl")
+
+    def _load_pkl(self, path):
+        try:
+            with open(path, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return None
+
+    def _save_pkl(self, path, payload):
+        cache_dir = os.path.dirname(path)
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+        with open(path, 'wb') as f:
+            pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def _load_base_cache(self, cache_fp):
+        payload = self._load_pkl(cache_fp)
+        if not isinstance(payload, dict):
+            return None
+        if payload.get('version') != STOCK_BASE_CACHE_VERSION:
+            return None
+        return payload
+
+    def _build_base_cache(self, data_path):
+        try:
+            read_columns = None
+            try:
+                import pyarrow.parquet as pq
+                pf = pq.ParquetFile(data_path)
+                available = set(pf.schema.names)
+                base_cols = {
+                    'open', 'high', 'low', 'close', 'volume', 'amount',
+                    'settle', 'openInterest', 'preClose', 'suspendFlag'
+                }
+                wanted = {'code', 'time', self.target} | base_cols
+                if self.target in {'lag_return', 'lag_return_rank', 'lag_return_cs_rank'}:
+                    wanted |= {'open', 'close', 'preClose'}
+                read_columns = [c for c in wanted if c in available]
+            except Exception:
+                read_columns = None
+            df_raw = pd.read_parquet(data_path, columns=read_columns)
+        except Exception as exc:
+            raise ImportError("pandas.read_parquet requires pyarrow or fastparquet") from exc
+
+        if 'code' not in df_raw.columns:
+            raise ValueError("stock data must include 'code' column")
+        if 'time' not in df_raw.columns:
+            raise ValueError("stock data must include 'time' column with ms timestamp")
+
+        df_raw = df_raw.copy()
+        df_raw['datetime'] = self._build_datetime(df_raw, 'time')
+        df_raw = df_raw.dropna(subset=['datetime', 'code'])
+        df_raw = df_raw.sort_values(['code', 'datetime'])
+
+        if 'open' not in df_raw.columns:
+            raise ValueError("stock data must include 'open' column")
+        if self.target in {'lag_return', 'lag_return_rank', 'lag_return_cs_rank'}:
+            if 'close' not in df_raw.columns:
+                raise ValueError("stock data must include 'close' column for lag_return chaining")
+            if 'preClose' not in df_raw.columns:
+                raise ValueError("stock data must include 'preClose' column for lag_return chaining")
+            prev_open = df_raw.groupby('code')['open'].shift(1)
+            prev_close = df_raw.groupby('code')['close'].shift(1)
+            pre_close = df_raw['preClose']
+            open_px = df_raw['open']
+            with np.errstate(divide='ignore', invalid='ignore'):
+                intraday = prev_close / prev_open
+                overnight = open_px / pre_close
+                lag_return = intraday * overnight - 1
+            valid = (prev_open > 0) & (prev_close > 0) & (pre_close > 0) & (open_px > 0)
+            if 'suspendFlag' in df_raw.columns:
+                valid &= df_raw['suspendFlag'] == 0
+            if STOCK_RETURN_LIMIT is not None:
+                valid &= np.abs(lag_return) <= STOCK_RETURN_LIMIT
+            df_raw['lag_return'] = lag_return.where(valid)
+            if self.target != 'lag_return':
+                df_raw[self.target] = df_raw.groupby('datetime')['lag_return'].rank(pct=True)
+
+        if self.target not in df_raw.columns:
+            raise ValueError(f"target '{self.target}' not found in stock data")
+        if 'suspendFlag' not in df_raw.columns:
+            df_raw['suspendFlag'] = 0
+
+        base_cols = [
+            'open', 'high', 'low', 'close', 'volume', 'amount',
+            'settle', 'openInterest', 'preClose', 'suspendFlag'
+        ]
+        base_feature_cols = [col for col in base_cols if col in df_raw.columns]
+        columns = base_feature_cols + ([self.target] if self.target not in base_feature_cols else [])
+        if not columns:
+            raise ValueError("no usable stock columns found for base cache")
+
+        data_by_code = {}
+        for code, group in df_raw.groupby('code', sort=True):
+            data_by_code[code] = {
+                'data': group[columns].values.astype(np.float32, copy=False),
+                'dates': group['datetime'].values,
+                'suspend': group['suspendFlag'].values.astype(int, copy=False),
+            }
+
+        return {
+            'version': STOCK_BASE_CACHE_VERSION,
+            'columns': columns,
+            'data_by_code': data_by_code,
+        }
+
+    def _read_base_payload(self, local_fp, use_cache: bool):
+        base_key = self._base_cache_key(local_fp)
+        base_payload = _STOCK_BASE_MEM_CACHE.get(base_key)
+        base_fp = None
+        if base_payload is None and use_cache:
+            base_fp = self._base_cache_path(local_fp)
+            if os.path.exists(base_fp):
+                base_payload = self._load_base_cache(base_fp)
+        if base_payload is None:
+            base_payload = self._build_base_cache(local_fp)
+            if use_cache:
+                if base_fp is None:
+                    base_fp = self._base_cache_path(local_fp)
+                self._save_pkl(base_fp, base_payload)
+        if use_cache:
+            _STOCK_BASE_MEM_CACHE[base_key] = base_payload
+        return base_payload
+
+    def __read_data__(self):
+        local_fp = os.path.join(self.root_path, self.data_path)
+        if not os.path.exists(local_fp):
+            raise FileNotFoundError(f"stock data not found: {local_fp}")
+
+        use_cache = getattr(self.args, 'use_stock_cache', True)
+        if getattr(self.args, 'disable_stock_cache', False):
+            use_cache = False
+
+        cache_fp = self._packed_cache_path(local_fp)
+        if use_cache and os.path.exists(cache_fp):
+            payload = self._load_pkl(cache_fp)
+            if isinstance(payload, dict) and payload.get('version') == STOCK_PACKED_CACHE_VERSION:
+                self.feature_cols = payload['feature_cols']
+                self.pack_feature_cols = payload.get('pack_feature_cols', payload.get('feature_cols', []))
+                self.c_in = payload['c_in']
+                self.universe_codes = payload['universe_codes']
+                self.dates = payload['dates']
+                self.data = payload['data']
+                self.open = payload.get('open')
+                self.suspend = payload.get('suspend')
+                self.stamp = payload['stamp']
+                self.sample_index = payload['sample_index']
+                self.sample_meta = payload['sample_meta']
+                self.scaler = payload.get('scaler', StandardScaler())
+                self._scaler_fitted = payload.get('scaler_fitted', False)
+                self.n_codes = int(payload.get('n_codes', len(self.universe_codes)))
+                self.n_groups = int(payload.get('n_groups', 1))
+                self.target_slice = payload.get('target_slice')
+                return
+
+        base_payload = self._read_base_payload(local_fp, use_cache=use_cache)
+        base_columns = base_payload['columns']
+        base_data_by_code = base_payload['data_by_code']
+
+        if self.target not in base_columns:
+            raise ValueError(f"target '{self.target}' not in cached base columns")
+        if 'open' not in base_columns:
+            raise ValueError("stock base cache missing 'open' column")
+
+        base_cols = [
+            'open', 'high', 'low', 'close', 'volume', 'amount',
+            'settle', 'openInterest', 'preClose', 'suspendFlag'
+        ]
+        base_feature_cols = [col for col in base_cols if col in base_columns]
+
+        if self.features == 'S':
+            pack_feature_cols = [self.target]
+        else:
+            pack_feature_cols = [col for col in base_feature_cols if col != self.target]
+            if self.target not in pack_feature_cols:
+                pack_feature_cols.append(self.target)
+
+        self.pack_feature_cols = pack_feature_cols
+        self.feature_cols = pack_feature_cols
+        col_idx = [base_columns.index(c) for c in pack_feature_cols]
+        open_col_idx = base_columns.index('open')
+
+        pack_start, pack_end = self.pack_date_range
+        if pack_start is None:
+            pack_start = _parse_date(getattr(self.args, 'train_start', None))
+        if pack_end is None:
+            pack_end = _parse_date(getattr(self.args, 'val_end', None)) or _parse_date(getattr(self.args, 'test_end', None))
+        if pack_start is None or pack_end is None:
+            raise ValueError("stock_pack_start/stock_pack_end (or train_start/val_end) must be set for packed stock data")
+        if pack_start > pack_end:
+            raise ValueError("stock_pack_start must be <= stock_pack_end")
+        self.pack_date_range = (pack_start, pack_end)
+
+        universe_size = int(getattr(self.args, 'stock_universe_size', 0) or 0)
+        codes = sorted(base_data_by_code.keys())
+        selected = []
+        for code in codes:
+            payload = base_data_by_code.get(code)
+            if payload is None:
+                continue
+            dates = payload.get('dates')
+            if dates is None or len(dates) == 0:
+                continue
+            start_dt = pd.Timestamp(dates[0])
+            end_dt = pd.Timestamp(dates[-1])
+            if start_dt > pack_start or end_dt < pack_end:
+                continue
+            selected.append(code)
+            if universe_size > 0 and len(selected) >= universe_size:
+                break
+        if not selected:
+            raise ValueError("no stock codes satisfy pack date coverage; try smaller pack range or set stock_universe_size")
+        self.universe_codes = selected
+        self.n_codes = len(selected)
+        self.n_groups = len(pack_feature_cols)
+        self.c_in = self.n_codes * self.n_groups
+        self.target_slice = ((self.n_groups - 1) * self.n_codes, self.n_groups * self.n_codes)
+
+        self.scaler = StandardScaler()
+        self._scaler_fitted = False
+        if self.scale:
+            for code in selected:
+                payload = base_data_by_code[code]
+                data_all = payload['data'][:, col_idx]
+                dates_all = payload['dates']
+                valid = np.isfinite(data_all).all(axis=1)
+                if isinstance(dates_all, np.ndarray):
+                    valid &= ~pd.isna(dates_all)
+                if not valid.any():
+                    continue
+                data = data_all[valid]
+                dates = dates_all[valid]
+                if self.train_years:
+                    train_mask = pd.DatetimeIndex(dates).year.isin(self.train_years)
+                else:
+                    train_mask = np.ones(len(dates), dtype=bool)
+                train_start, train_end = self.train_date_range
+                if train_start is not None:
+                    train_mask &= dates >= train_start
+                if train_end is not None:
+                    train_mask &= dates <= train_end
+                if train_mask.any():
+                    self.scaler.partial_fit(data[train_mask])
+                    self._scaler_fitted = True
+
+        fill_value = float(getattr(self.args, 'stock_pack_fill_value', 0.0))
+
+        # Use a union calendar to avoid empty intersections caused by suspensions/missing targets.
+        calendar = None
+        for code in selected:
+            payload = base_data_by_code[code]
+            dates_all = payload.get('dates')
+            if dates_all is None or len(dates_all) == 0:
+                continue
+            range_mask = (~pd.isna(dates_all)) & (dates_all >= pack_start) & (dates_all <= pack_end)
+            dates = dates_all[range_mask]
+            if len(dates) == 0:
+                continue
+            calendar = dates if calendar is None else np.union1d(calendar, dates)
+
+        if calendar is None or len(calendar) < (self.seq_len + self.pred_len + 1):
+            raise ValueError(
+                f"packed calendar too short after union: {0 if calendar is None else len(calendar)}; "
+                f"need at least {self.seq_len + self.pred_len + 1}"
+            )
+
+        common_dates = np.sort(calendar)
+        t_len = len(common_dates)
+        n_codes = len(selected)
+        n_groups = len(pack_feature_cols)
+
+        data_mat = np.full((t_len, n_groups * n_codes), fill_value, dtype=np.float32)
+        open_mat = np.zeros((t_len, n_codes), dtype=np.float32)
+        suspend_mat = np.ones((t_len, n_codes), dtype=np.int16)
+
+        mean = getattr(self.scaler, 'mean_', None) if self._scaler_fitted else None
+        scale = getattr(self.scaler, 'scale_', None) if self._scaler_fitted else None
+
+        for j, code in enumerate(selected):
+            payload = base_data_by_code[code]
+            data_all = payload.get('data')
+            dates_all = payload.get('dates')
+            suspend_all = payload.get('suspend')
+            if data_all is None or len(data_all) == 0 or dates_all is None:
+                continue
+
+            range_mask = (~pd.isna(dates_all)) & (dates_all >= pack_start) & (dates_all <= pack_end)
+            if not range_mask.any():
+                continue
+            dates = dates_all[range_mask]
+            data = data_all[range_mask]
+            suspend = suspend_all[range_mask] if suspend_all is not None else np.zeros(len(dates), dtype=int)
+
+            idx = np.searchsorted(common_dates, dates)
+            if idx.max() >= len(common_dates):
+                raise ValueError("date alignment failed (index out of bounds)")
+            if not np.array_equal(common_dates[idx], dates):
+                raise ValueError("date alignment failed (mismatched dates)")
+
+            feat = data[:, col_idx].astype(np.float32, copy=False)
+            if self.scale and mean is not None and scale is not None:
+                for f in range(n_groups):
+                    x = feat[:, f]
+                    valid = np.isfinite(x)
+                    if not valid.any():
+                        continue
+                    feat[valid, f] = (x[valid] - float(mean[f])) / (float(scale[f]) + 1e-8)
+
+            feat = np.where(np.isfinite(feat), feat, fill_value).astype(np.float32, copy=False)
+            for f in range(n_groups):
+                data_mat[idx, f * n_codes + j] = feat[:, f]
+
+            open_mat[idx, j] = data[:, open_col_idx].astype(np.float32, copy=False)
+            suspend_mat[idx, j] = suspend.astype(np.int16, copy=False)
+
+        if self.timeenc == 0:
+            stamp_df = pd.DataFrame({'date': pd.to_datetime(common_dates)})
+            stamp_df['month'] = stamp_df.date.dt.month
+            stamp_df['day'] = stamp_df.date.dt.day
+            stamp_df['weekday'] = stamp_df.date.dt.weekday
+            stamp = stamp_df.drop(['date'], axis=1).values.astype(np.float32)
+        else:
+            stamp = time_features(pd.to_datetime(common_dates), freq=self.freq)
+            stamp = stamp.transpose(1, 0).astype(np.float32)
+
+        self.dates = common_dates
+        self.data = data_mat
+        self.open = open_mat
+        self.suspend = suspend_mat
+        self.stamp = stamp
+
+        split_years = self._select_split_years()
+        split_start, split_end = self._select_split_date_range()
+        split_years_list = sorted(split_years)
+
+        data_len = len(self.data)
+        sample_index = []
+        sample_meta = []
+        if data_len >= self.seq_len + self.pred_len:
+            end_idx = np.arange(self.seq_len - 1, data_len - self.pred_len)
+            trade_idx = end_idx + 1
+            trade_years = pd.DatetimeIndex(self.dates).year
+            if split_years_list:
+                mask = np.isin(trade_years[trade_idx], split_years_list)
+                end_idx = end_idx[mask]
+                trade_idx = trade_idx[mask]
+            if split_start is not None or split_end is not None:
+                trade_dates = pd.to_datetime(self.dates[trade_idx])
+                date_mask = np.ones(len(trade_idx), dtype=bool)
+                if split_start is not None:
+                    date_mask &= trade_dates >= split_start
+                if split_end is not None:
+                    date_mask &= trade_dates <= split_end
+                end_idx = end_idx[date_mask]
+                trade_idx = trade_idx[date_mask]
+            if end_idx.size > 0:
+                pred_idx = end_idx + self.pred_len
+                sample_index = [int(i) for i in end_idx]
+                end_dates = self.dates[end_idx]
+                trade_dates = self.dates[trade_idx]
+                pred_dates = self.dates[pred_idx]
+                sample_meta = [
+                    {
+                        'end_date': pd.Timestamp(end_dates[i]),
+                        'trade_date': pd.Timestamp(trade_dates[i]),
+                        'pred_date': pd.Timestamp(pred_dates[i]),
+                    }
+                    for i in range(len(end_idx))
+                ]
+        self.sample_index = sample_index
+        self.sample_meta = sample_meta
+
+        if use_cache:
+            payload = {
+                'version': STOCK_PACKED_CACHE_VERSION,
+                'feature_cols': self.feature_cols,
+                'pack_feature_cols': self.pack_feature_cols,
+                'c_in': self.c_in,
+                'universe_codes': self.universe_codes,
+                'n_codes': self.n_codes,
+                'n_groups': self.n_groups,
+                'target_slice': self.target_slice,
+                'dates': self.dates,
+                'data': self.data,
+                'open': self.open,
+                'suspend': self.suspend,
+                'stamp': self.stamp,
+                'sample_index': self.sample_index,
+                'sample_meta': self.sample_meta,
+                'scaler': self.scaler,
+                'scaler_fitted': self._scaler_fitted,
+            }
+            self._save_pkl(cache_fp, payload)
+
+    def __getitem__(self, index):
+        end_idx = self.sample_index[index]
+        s_end = end_idx + 1
+        s_begin = s_end - self.seq_len
+        r_begin = s_end - self.label_len
+        r_end = r_begin + self.label_len + self.pred_len
+
+        seq_x = self.data[s_begin:s_end]
+        seq_y = self.data[r_begin:r_end]
+        seq_x_mark = self.stamp[s_begin:s_end]
+        seq_y_mark = self.stamp[r_begin:r_end]
+        return seq_x, seq_y, seq_x_mark, seq_y_mark
+
+    def __len__(self):
+        return len(self.sample_index)
+
+    def inverse_transform(self, data):
+        if not self.scale or not getattr(self, '_scaler_fitted', False):
+            return data
+        mean = getattr(self.scaler, 'mean_', None)
+        scale = getattr(self.scaler, 'scale_', None)
+        if mean is None or scale is None:
+            return data
+
+        n_codes = int(getattr(self, 'n_codes', 0) or len(getattr(self, 'universe_codes', []) or []))
+        n_groups = int(getattr(self, 'n_groups', 0) or 1)
+        if n_codes <= 0 or n_groups <= 0:
+            return data
+
+        if data.shape[-1] == n_groups * n_codes:
+            out = data.copy()
+            for f in range(n_groups):
+                mu = float(mean[f])
+                sd = float(scale[f]) + 1e-8
+                start = f * n_codes
+                end = (f + 1) * n_codes
+                out[..., start:end] = out[..., start:end] * sd + mu
+            return out
+
+        # Backwards compat: target-only
+        if data.shape[-1] == n_codes and len(mean) >= 1:
+            mu = float(mean[-1 if len(mean) > 1 else 0])
+            sd = float(scale[-1 if len(scale) > 1 else 0]) + 1e-8
+            return data * sd + mu
         return data
