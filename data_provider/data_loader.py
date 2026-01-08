@@ -34,6 +34,7 @@ STOCK_BASE_CACHE_VERSION = "base_v2_clip30"
 STOCK_PACKED_CACHE_VERSION = "packed_v2_union_multifeat"
 STOCK_RETURN_LIMIT = 0.30
 _STOCK_BASE_MEM_CACHE = {}
+_STOCK_PACK_SELECT_END_WARNED = False
 
 
 def parse_years_spec(spec):
@@ -1650,6 +1651,7 @@ class Dataset_StockPacked(Dataset):
 
     def _packed_cache_key(self, data_path):
         pack_start, pack_end = self.pack_date_range
+        pack_select_end = getattr(self.args, 'stock_pack_select_end', None) or 'train_end'
         key_data = {
             'data_path': os.path.abspath(data_path),
             'mtime': os.path.getmtime(data_path),
@@ -1671,6 +1673,7 @@ class Dataset_StockPacked(Dataset):
             'val_date_range': tuple(str(v) for v in self.val_date_range),
             'pack_start': str(pack_start),
             'pack_end': str(pack_end),
+            'pack_select_end': str(pack_select_end),
             'universe_size': int(getattr(self.args, 'stock_universe_size', 0) or 0),
             'fill_value': float(getattr(self.args, 'stock_pack_fill_value', 0.0)),
             'strict_pred_end': bool(self.strict_pred_end),
@@ -1878,6 +1881,32 @@ class Dataset_StockPacked(Dataset):
             raise ValueError("stock_pack_start must be <= stock_pack_end")
         self.pack_date_range = (pack_start, pack_end)
 
+        select_end_raw = getattr(self.args, 'stock_pack_select_end', None)
+        select_end_mode = str(select_end_raw).strip().lower() if select_end_raw is not None else 'train_end'
+        coverage_end = pack_end
+        if select_end_mode in {'train_end', 'train'}:
+            train_end = self.train_date_range[1]
+            coverage_end = train_end if train_end is not None else pack_end
+        elif select_end_mode in {'none', 'no', 'off', 'false', '0'}:
+            coverage_end = None
+        else:
+            parsed = _parse_date(select_end_raw)
+            coverage_end = parsed if parsed is not None else pack_end
+
+        global _STOCK_PACK_SELECT_END_WARNED
+        train_end = self.train_date_range[1]
+        if (
+            not _STOCK_PACK_SELECT_END_WARNED
+            and select_end_mode in {'pack_end', 'pack'}
+            and train_end is not None
+            and train_end < pack_end
+        ):
+            _STOCK_PACK_SELECT_END_WARNED = True
+            print(
+                "[warn] stock_pack_select_end=pack_end selects the packed universe using future pack_end "
+                "(survivorship/lookahead bias). Consider setting --stock_pack_select_end=train_end."
+            )
+
         universe_size = int(getattr(self.args, 'stock_universe_size', 0) or 0)
         codes = sorted(base_data_by_code.keys())
         selected = []
@@ -1890,7 +1919,9 @@ class Dataset_StockPacked(Dataset):
                 continue
             start_dt = pd.Timestamp(dates[0])
             end_dt = pd.Timestamp(dates[-1])
-            if start_dt > pack_start or end_dt < pack_end:
+            if start_dt > pack_start:
+                continue
+            if coverage_end is not None and end_dt < coverage_end:
                 continue
             selected.append(code)
             if universe_size > 0 and len(selected) >= universe_size:

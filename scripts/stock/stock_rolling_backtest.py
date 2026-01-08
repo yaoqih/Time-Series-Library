@@ -18,7 +18,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'
 import models as models_pkg
 
 from data_provider.data_factory import data_provider
-from data_provider.data_loader import Dataset_Stock, Dataset_StockPacked
+from data_provider.data_loader import Dataset_Stock, Dataset_StockPacked, STOCK_RETURN_LIMIT
 from exp.exp_long_term_forecasting import Exp_Long_Term_Forecast
 from utils.wandb_utils import init_wandb, log_wandb, finish_wandb
 
@@ -445,6 +445,12 @@ def predict_dataset(exp, data_set, data_loader, args):
     offset = 0
     packed = bool(getattr(data_set, 'packed', False))
     need_true_open_return = getattr(args, 'target', '') in RANK_TARGETS
+    trade_horizon = int(getattr(args, 'trade_horizon', 2) or 2)
+    true_return_limit = getattr(args, 'stock_true_return_limit', None)
+    if true_return_limit is None:
+        true_return_limit = STOCK_RETURN_LIMIT
+    if true_return_limit is not None:
+        true_return_limit = float(true_return_limit)
 
     open_pos = None
     open_scale = None
@@ -489,8 +495,9 @@ def predict_dataset(exp, data_set, data_loader, args):
                 outputs_t = outputs[:, :, target_start:target_end]
                 batch_y_t = batch_y[:, :, target_start:target_end]
 
-                pred_step = outputs_t[:, -1, :]  # [B, n_codes]
-                true_step = batch_y_t[:, -1, :]  # [B, n_codes]
+                step_idx = trade_horizon - 1
+                pred_step = outputs_t[:, step_idx, :]  # [B, n_codes]
+                true_step = batch_y_t[:, step_idx, :]  # [B, n_codes]
                 codes = getattr(data_set, 'universe_codes', None)
                 if not codes:
                     raise ValueError("packed dataset missing universe_codes")
@@ -503,17 +510,20 @@ def predict_dataset(exp, data_set, data_loader, args):
                 for i in range(pred_step.shape[0]):
                     end_idx = int(data_set.sample_index[offset + i])
                     trade_idx = end_idx + 1
-                    pred_idx = end_idx + int(args.pred_len)
+                    exit_idx = end_idx + step_idx + 1
                     meta = data_set.sample_meta[offset + i]
+                    exit_date = pd.Timestamp(dates[exit_idx])
 
                     if need_true_open_return:
                         if open_mat is None:
                             raise ValueError("packed dataset missing open matrix required for true return")
                         open_trade = open_mat[trade_idx]
-                        open_pred = open_mat[pred_idx]
+                        open_pred = open_mat[exit_idx]
                         with np.errstate(divide='ignore', invalid='ignore'):
                             true_ret = open_pred / open_trade - 1.0
                         true_ret = np.where((open_trade > 0) & (open_pred > 0), true_ret, np.nan)
+                        if true_return_limit is not None:
+                            true_ret = np.where(np.abs(true_ret) <= true_return_limit, true_ret, np.nan)
                     else:
                         true_ret = true_step[i]
 
@@ -525,6 +535,7 @@ def predict_dataset(exp, data_set, data_loader, args):
                             'end_date': meta['end_date'],
                             'trade_date': meta['trade_date'],
                             'pred_date': meta['pred_date'],
+                            'exit_date': exit_date,
                             'suspendFlag': int(suspend_flags[j]),
                             'pred_return': float(preds[j]),
                             'true_return': float(true_ret[j]) if np.isfinite(true_ret[j]) else float('nan'),
@@ -534,35 +545,44 @@ def predict_dataset(exp, data_set, data_loader, args):
                 f_dim = -1 if args.features == 'MS' else 0
                 outputs = outputs[:, :, f_dim:]
                 batch_y = batch_y[:, :, f_dim:]
-                pred_step = outputs[:, -1, -1]
-                true_step = batch_y[:, -1, -1]
+                step_idx = trade_horizon - 1
+                pred_step = outputs[:, step_idx, -1]
+                true_step = batch_y[:, step_idx, -1]
 
                 for i in range(len(pred_step)):
                     meta = data_set.sample_meta[offset + i]
                     true_return = float(true_step[i])
+                    exit_date = meta.get('pred_date')
                     if need_true_open_return:
                         code, end_idx = data_set.sample_index[offset + i]
                         trade_idx = int(end_idx) + 1
-                        pred_idx = int(end_idx) + int(args.pred_len)
+                        exit_idx = int(end_idx) + step_idx + 1
                         payload = data_set.data_by_code.get(code)
                         if payload is None or open_pos is None:
                             true_return = float('nan')
                         else:
                             data = payload['data']
                             open_trade = float(data[trade_idx, open_pos])
-                            open_pred = float(data[pred_idx, open_pos])
+                            open_pred = float(data[exit_idx, open_pos])
                             if open_scale is not None and open_mean is not None:
                                 open_trade = open_trade * open_scale + open_mean
                                 open_pred = open_pred * open_scale + open_mean
                             if open_trade > 0 and open_pred > 0:
                                 true_return = open_pred / open_trade - 1.0
+                                if true_return_limit is not None and abs(true_return) > true_return_limit:
+                                    true_return = float('nan')
                             else:
                                 true_return = float('nan')
+                            try:
+                                exit_date = pd.Timestamp(payload['dates'][exit_idx])
+                            except Exception:
+                                exit_date = meta.get('pred_date')
                     records.append({
                         'code': meta['code'],
                         'end_date': meta['end_date'],
                         'trade_date': meta['trade_date'],
                         'pred_date': meta['pred_date'],
+                        'exit_date': exit_date,
                         'suspendFlag': meta['suspendFlag'],
                         'pred_return': float(pred_step[i]),
                         'true_return': float(true_return)
@@ -606,6 +626,8 @@ def parse_args():
     parser.add_argument('--seq_len', type=int, default=64, help='input sequence length')
     parser.add_argument('--label_len', type=int, default=1, help='start token length')
     parser.add_argument('--pred_len', type=int, default=2, help='prediction sequence length')
+    parser.add_argument('--trade_horizon', type=int, default=2,
+                        help='which forecast horizon step to trade on (2 = next-next open return); must be <= pred_len')
     parser.add_argument('--features', type=str, default='MS', help='forecasting task options:[M, S, MS]')
     parser.add_argument('--target', type=str, default='lag_return_cs_rank', help='target feature')
     parser.add_argument('--freq', type=str, default='b', help='freq for time features encoding')
@@ -676,6 +698,9 @@ def parse_args():
                         help='packed calendar start (YYYY-MM-DD); default derived per rolling window')
     parser.add_argument('--stock_pack_end', type=str, default=None,
                         help='packed calendar end (YYYY-MM-DD); default derived per rolling window')
+    parser.add_argument('--stock_pack_select_end', type=str, default='train_end',
+                        help="packed universe selection coverage end: 'train_end'(default, no-lookahead), "
+                             "'pack_end'(legacy survivorship bias), 'none'(allow partial), or an explicit date (YYYY-MM-DD)")
     parser.add_argument('--stock_pack_extra_td', type=int, default=2,
                         help='extra trading days after max(test_end, val_end) for packed calendar end (in addition to pred_len-1)')
     parser.add_argument('--stock_pack_fill_value', type=float, default=0.0,
@@ -686,6 +711,8 @@ def parse_args():
     parser.add_argument('--disable_stock_cache', action='store_true', default=False, help='disable stock cache')
     parser.add_argument('--stock_preprocess_workers', type=int, default=0,
                         help='parallel workers for stock preprocessing (0 = single process)')
+    parser.add_argument('--stock_true_return_limit', type=float, default=None,
+                        help='abs limit for true_return computed from open prices; default uses STOCK_RETURN_LIMIT')
 
     parser.add_argument('--results_root', type=str, default='stock_results_rolling', help='results directory')
     parser.add_argument('--resume', type=_str2bool, nargs='?', const=True, default=True,
@@ -774,7 +801,16 @@ def _run_window(base_args, model_name, window, use_window_seed=False):
     window_tag = _window_tag(train_start, train_end, test_start, test_end, val_start, val_end, idx)
     strict_pred_end = bool(getattr(args_run, 'stock_strict_pred_end', True))
     window_tag = f"{window_tag}_SL{int(strict_pred_end)}"
+    trade_horizon = int(getattr(args_run, 'trade_horizon', 2) or 2)
+    true_return_limit = getattr(args_run, 'stock_true_return_limit', None)
+    if true_return_limit is None:
+        true_return_limit = STOCK_RETURN_LIMIT
+    trl_val = "none" if true_return_limit is None else f"{float(true_return_limit):g}".replace('-', 'm').replace('.', 'p')
+    window_tag = f"{window_tag}_TH{trade_horizon}_TRL{trl_val}"
     if getattr(args_run, 'stock_pack', False):
+        sel = str(getattr(args_run, 'stock_pack_select_end', 'train_end') or 'train_end').strip().lower()
+        sel = sel.replace('-', '')
+        window_tag = f"{window_tag}_SE{sel}"
         try:
             pk_start = pd.Timestamp(getattr(args_run, 'stock_pack_start', None))
             pk_end = pd.Timestamp(getattr(args_run, 'stock_pack_end', None))
@@ -956,6 +992,13 @@ def main():
         _normalize_multi_gpu_args(args)
     if args.pred_len < 2:
         raise ValueError("pred_len must be >= 2 to forecast next-next open return")
+    args.trade_horizon = int(getattr(args, 'trade_horizon', 2) or 2)
+    if args.trade_horizon < 2:
+        raise ValueError("trade_horizon must be >= 2 (2 = next-next open return)")
+    if args.trade_horizon > args.pred_len:
+        raise ValueError(f"trade_horizon ({args.trade_horizon}) must be <= pred_len ({args.pred_len})")
+    if args.window_order == 'train_test_val':
+        print("[warn] window_order=train_test_val uses future val after test for early stopping; prefer train_val_test.")
 
     args.task_name = 'long_term_forecast'
     args.data = 'stock'
