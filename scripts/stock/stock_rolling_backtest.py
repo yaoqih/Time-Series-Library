@@ -265,6 +265,19 @@ def backtest_topk_detailed(
     *,
     nan_true_return_policy: str = "drop",
 ):
+    input_rows = int(len(pred_df)) if pred_df is not None else 0
+    input_trade_dates = 0
+    input_codes = 0
+    try:
+        if pred_df is not None and not pred_df.empty:
+            if 'trade_date' in pred_df.columns:
+                input_trade_dates = int(pd.to_datetime(pred_df['trade_date'], errors='coerce').nunique())
+            if 'code' in pred_df.columns:
+                input_codes = int(pd.Series(pred_df['code']).nunique())
+    except Exception:
+        input_trade_dates = 0
+        input_codes = 0
+
     if pred_df.empty:
         metrics = {
             'final_capital': float(initial_cash),
@@ -275,7 +288,18 @@ def backtest_topk_detailed(
             'win_rate_pct': 0.0,
             'profit_factor': 0.0,
             'total_trades': 0,
-            'trade_days': 0
+            'trade_days': 0,
+            'data_input_rows': input_rows,
+            'data_input_trade_dates': input_trade_dates,
+            'data_input_codes': input_codes,
+            'data_used_rows': 0,
+            'data_used_trade_dates': 0,
+            'data_used_codes': 0,
+            'data_nan_pred_return_rows': 0,
+            'data_nan_true_return_rows': 0,
+            'data_candidates_per_day_mean': 0.0,
+            'data_candidates_per_day_median': 0.0,
+            'data_candidates_per_day_min': 0,
         }
         empty_curve = pd.DataFrame(columns=['date', 'capital'])
         empty_picks = pd.DataFrame(columns=[
@@ -309,6 +333,7 @@ def backtest_topk_detailed(
 
     before_rows = int(len(df))
     before_nan_true = int(df['true_return'].isna().sum()) if 'true_return' in df.columns else before_rows
+    before_nan_pred = int(df['pred_return'].isna().sum()) if 'pred_return' in df.columns else before_rows
 
     df = df.dropna(subset=['pred_return'])
     if nan_policy == "drop":
@@ -328,12 +353,89 @@ def backtest_topk_detailed(
     df = df[df['suspendFlag'] == 0]
     df = df.sort_values('trade_date')
 
+    used_rows = int(len(df))
+    used_trade_dates = int(df['trade_date'].nunique()) if used_rows else 0
+    used_codes = int(df['code'].nunique()) if used_rows and 'code' in df.columns else 0
+    if used_rows:
+        cand_counts = df.groupby('trade_date', sort=True).size()
+        cand_mean = float(cand_counts.mean()) if not cand_counts.empty else 0.0
+        cand_median = float(cand_counts.median()) if not cand_counts.empty else 0.0
+        cand_min = int(cand_counts.min()) if not cand_counts.empty else 0
+    else:
+        cand_mean = 0.0
+        cand_median = 0.0
+        cand_min = 0
+
     if df.empty:
-        return backtest_topk_detailed(pd.DataFrame(), initial_cash, topk, commission, stamp, risk_free)
+        metrics = {
+            'final_capital': float(initial_cash),
+            'cumulative_return_pct': 0.0,
+            'annualized_return_pct': 0.0,
+            'max_drawdown_pct': 0.0,
+            'sharpe': 0.0,
+            'win_rate_pct': 0.0,
+            'profit_factor': 0.0,
+            'total_trades': 0,
+            'trade_days': 0,
+            'data_input_rows': input_rows,
+            'data_input_trade_dates': input_trade_dates,
+            'data_input_codes': input_codes,
+            'data_used_rows': used_rows,
+            'data_used_trade_dates': used_trade_dates,
+            'data_used_codes': used_codes,
+            'data_nan_pred_return_rows': before_nan_pred,
+            'data_nan_true_return_rows': before_nan_true,
+            'data_candidates_per_day_mean': cand_mean,
+            'data_candidates_per_day_median': cand_median,
+            'data_candidates_per_day_min': cand_min,
+        }
+        empty_curve = pd.DataFrame(columns=['date', 'capital'])
+        empty_picks = pd.DataFrame(columns=[
+            'trade_date', 'code', 'pred_return', 'true_return',
+            'net_return', 'net_factor', 'capital'
+        ])
+        empty_daily = pd.DataFrame(columns=[
+            'trade_date', 'net_return', 'net_factor', 'capital',
+            'return_pct', 'drawdown_pct', 'max_drawdown_pct',
+            'profit_factor', 'sharpe'
+        ])
+        return metrics, empty_curve, empty_picks, empty_daily
 
     all_trade_dates = df['trade_date'].drop_duplicates().sort_values()
     if all_trade_dates.empty:
-        return backtest_topk_detailed(pd.DataFrame(), initial_cash, topk, commission, stamp, risk_free)
+        metrics = {
+            'final_capital': float(initial_cash),
+            'cumulative_return_pct': 0.0,
+            'annualized_return_pct': 0.0,
+            'max_drawdown_pct': 0.0,
+            'sharpe': 0.0,
+            'win_rate_pct': 0.0,
+            'profit_factor': 0.0,
+            'total_trades': 0,
+            'trade_days': 0,
+            'data_input_rows': input_rows,
+            'data_input_trade_dates': input_trade_dates,
+            'data_input_codes': input_codes,
+            'data_used_rows': used_rows,
+            'data_used_trade_dates': used_trade_dates,
+            'data_used_codes': used_codes,
+            'data_nan_pred_return_rows': before_nan_pred,
+            'data_nan_true_return_rows': before_nan_true,
+            'data_candidates_per_day_mean': cand_mean,
+            'data_candidates_per_day_median': cand_median,
+            'data_candidates_per_day_min': cand_min,
+        }
+        empty_curve = pd.DataFrame(columns=['date', 'capital'])
+        empty_picks = pd.DataFrame(columns=[
+            'trade_date', 'code', 'pred_return', 'true_return',
+            'net_return', 'net_factor', 'capital'
+        ])
+        empty_daily = pd.DataFrame(columns=[
+            'trade_date', 'net_return', 'net_factor', 'capital',
+            'return_pct', 'drawdown_pct', 'max_drawdown_pct',
+            'profit_factor', 'sharpe'
+        ])
+        return metrics, empty_curve, empty_picks, empty_daily
 
     if 'exit_date' in df.columns:
         # Warn if exit_date doesn't line up with next trade_date (common sign of multi-day horizon with daily compounding).
@@ -489,7 +591,18 @@ def backtest_topk_detailed(
         'win_rate_pct': float(win_rate * 100),
         'profit_factor': float(profit_factor_final),
         'total_trades': int(total_trades),
-        'trade_days': int(trade_days)
+        'trade_days': int(trade_days),
+        'data_input_rows': input_rows,
+        'data_input_trade_dates': input_trade_dates,
+        'data_input_codes': input_codes,
+        'data_used_rows': used_rows,
+        'data_used_trade_dates': used_trade_dates,
+        'data_used_codes': used_codes,
+        'data_nan_pred_return_rows': before_nan_pred,
+        'data_nan_true_return_rows': before_nan_true,
+        'data_candidates_per_day_mean': cand_mean,
+        'data_candidates_per_day_median': cand_median,
+        'data_candidates_per_day_min': cand_min,
     }
 
     if not daily_df.empty:
@@ -779,7 +892,7 @@ def parse_args():
                         help='parallel workers for stock preprocessing (0 = single process)')
     parser.add_argument('--stock_true_return_limit', type=float, default=None,
                         help='abs limit for true_return computed from open prices; default uses STOCK_RETURN_LIMIT')
-    parser.add_argument('--backtest_nan_true_return', type=str, default='drop',
+    parser.add_argument('--backtest_nan_true_return', type=str, default='zero',
                         choices=['drop', 'zero'],
                         help="backtest policy for NaN true_return: 'drop' (current, can be optimistic), "
                              "'zero' (keep rows and assume 0 return)")
