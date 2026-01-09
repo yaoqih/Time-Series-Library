@@ -624,6 +624,7 @@ def predict_dataset(exp, data_set, data_loader, args):
     offset = 0
     packed = bool(getattr(data_set, 'packed', False))
     need_true_open_return = getattr(args, 'target', '') in RANK_TARGETS
+    use_amp = bool(getattr(args, 'use_amp', False)) and exp.device.type == 'cuda'
     trade_horizon = int(getattr(args, 'trade_horizon', 2) or 2)
     true_return_limit = getattr(args, 'stock_true_return_limit', None)
     if true_return_limit is None:
@@ -651,7 +652,11 @@ def predict_dataset(exp, data_set, data_loader, args):
 
             dec_inp = torch.zeros_like(batch_y[:, -args.pred_len:, :]).float()
             dec_inp = torch.cat([batch_y[:, :args.label_len, :], dec_inp], dim=1).float().to(exp.device)
-            outputs = exp.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+            if use_amp:
+                with torch.cuda.amp.autocast():
+                    outputs = exp.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+            else:
+                outputs = exp.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
 
             outputs = outputs[:, -args.pred_len:, :]
             batch_y = batch_y[:, -args.pred_len:, :]
