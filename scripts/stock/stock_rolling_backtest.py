@@ -28,6 +28,28 @@ ZERO_SHOT_MODELS = {
 RANK_TARGETS = {'lag_return_rank', 'lag_return_cs_rank'}
 
 _STOCK_TRADE_CAL_CACHE = None
+_SETTING_SHORTEN_CACHE = {}
+
+
+def _shorten_setting_name(name: str, max_len: int = 255) -> str:
+    """Shorten checkpoint directory names to avoid OS 'File name too long' errors."""
+    name = str(name)
+    if max_len is None or max_len <= 0:
+        return name
+    if len(name) <= max_len:
+        return name
+    digest = hashlib.md5(name.encode("utf-8")).hexdigest()[:12]
+    head_len = max_len - (1 + len(digest))
+    head = name[: max(0, head_len)]
+    shortened = f"{head}_{digest}" if head else digest
+    prev = _SETTING_SHORTEN_CACHE.get(name)
+    if prev is None:
+        _SETTING_SHORTEN_CACHE[name] = shortened
+        print(
+            f"[warn] checkpoint setting name too long ({len(name)} chars); "
+            f"using shortened name ({len(shortened)}): {shortened}"
+        )
+    return shortened
 
 
 def _load_stock_trade_calendar(args) -> pd.DatetimeIndex:
@@ -93,13 +115,14 @@ def _shift_by_trading_days(cal: pd.DatetimeIndex, anchor: pd.Timestamp, offset: 
 
 
 def build_setting(args, tag):
-    return (
+    setting = (
         f"{args.task_name}_{args.model_id}_{args.model}_{args.data}_"
         f"ft{args.features}_sl{args.seq_len}_ll{args.label_len}_pl{args.pred_len}_"
         f"dm{args.d_model}_nh{args.n_heads}_el{args.e_layers}_dl{args.d_layers}_"
         f"df{args.d_ff}_expand{args.expand}_dc{args.d_conv}_"
         f"fc{args.factor}_eb{args.embed}_dt{args.distil}_{args.des}_{tag}"
     )
+    return _shorten_setting_name(setting)
 
 
 def normalize_model_name(name):
@@ -825,7 +848,7 @@ def parse_args():
     parser.add_argument('--hybrid_ic_weight', type=float, default=0.7,
                         help='IC weight for Hybrid loss (ic_weight * IC + (1-ic_weight) * CCC)')
     parser.add_argument('--patience', type=int, default=3, help='early stopping patience')
-    parser.add_argument('--num_workers', type=int, default=4, help='data loader workers')
+    parser.add_argument('--num_workers', type=int, default=8, help='data loader workers')
     parser.add_argument('--persistent_workers', action='store_true', default=True,
                         help='keep data loader workers alive between epochs')
     parser.add_argument('--no_persistent_workers', dest='persistent_workers', action='store_false',
