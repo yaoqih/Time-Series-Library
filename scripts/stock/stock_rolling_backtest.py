@@ -361,13 +361,49 @@ def backtest_topk_detailed(
             'rank_ic_std': 0.0,
             'rank_ic_ir': 0.0,
             'rank_ic_tstat': 0.0,
+            'ic_abs_mean': 0.0,
+            'ic_abs_std': 0.0,
+            'ic_abs_ir': 0.0,
+            'ic_abs_tstat': 0.0,
+            'rank_ic_abs_mean': 0.0,
+            'rank_ic_abs_std': 0.0,
+            'rank_ic_abs_ir': 0.0,
+            'rank_ic_abs_tstat': 0.0,
             'top1_true_rank_pct_mean': 0.0,
             'top1_true_rank_pct_std': 0.0,
+            'top1_true_rank_pct_excess_mean': 0.0,
             'top1_true_rank_pct_tstat': 0.0,
             'top1_hit_top_decile_pct': 0.0,
+            'top1_hit_top_decile_z': 0.0,
+            'top1_hit_bottom_decile_pct': 0.0,
+            'top1_hit_bottom_decile_z': 0.0,
             'spread_p10_mean': 0.0,
             'spread_p10_std': 0.0,
             'spread_p10_tstat': 0.0,
+            'top1_true_oracle_gap_mean': 0.0,
+            'top1_true_oracle_gap_median': 0.0,
+            'top1_abs_true_rank_pct_mean': 0.0,
+            'top1_abs_true_rank_pct_std': 0.0,
+            'top1_abs_true_rank_pct_excess_mean': 0.0,
+            'top1_abs_true_rank_pct_tstat': 0.0,
+            'top1_hit_top_decile_abs_pct': 0.0,
+            'top1_hit_top_decile_abs_z': 0.0,
+            'top1_hit_bottom_decile_abs_pct': 0.0,
+            'top1_hit_bottom_decile_abs_z': 0.0,
+            'spread_p10_abs_mean': 0.0,
+            'spread_p10_abs_std': 0.0,
+            'spread_p10_abs_tstat': 0.0,
+            'top1_abs_true_oracle_gap_mean': 0.0,
+            'top1_abs_true_oracle_gap_median': 0.0,
+            'flip_final_capital': float(initial_cash),
+            'flip_cumulative_return_pct': 0.0,
+            'flip_annualized_return_pct': 0.0,
+            'flip_max_drawdown_pct': 0.0,
+            'flip_sharpe': 0.0,
+            'flip_win_rate_pct': 0.0,
+            'flip_profit_factor': 0.0,
+            'flip_total_trades': 0,
+            'flip_trade_days': 0,
             'data_input_rows': input_rows,
             'data_input_trade_dates': input_trade_dates,
             'data_input_codes': input_codes,
@@ -388,15 +424,16 @@ def backtest_topk_detailed(
         empty_daily = pd.DataFrame(columns=[
             'trade_date', 'net_return', 'net_factor', 'capital',
             'return_pct', 'drawdown_pct', 'max_drawdown_pct',
-            'profit_factor', 'sharpe', 'ic', 'rank_ic'
+            'profit_factor', 'sharpe', 'ic', 'rank_ic', 'ic_abs', 'rank_ic_abs'
         ])
         empty_cs_diag = pd.DataFrame(columns=[
             'trade_date', 'n_candidates',
             'pred_mean', 'pred_std', 'pred_min', 'pred_max',
             'true_mean', 'true_std', 'true_min', 'true_max',
-            'ic', 'rank_ic', 'spread_p10',
+            'ic', 'rank_ic', 'ic_abs', 'rank_ic_abs', 'spread_p10', 'spread_p10_abs',
             'top1_code', 'top1_pred_return', 'top1_true_return',
-            'top1_true_rank_pct', 'top1_true_oracle_gap'
+            'top1_true_rank_pct', 'top1_true_oracle_gap',
+            'top1_abs_true_rank_pct', 'top1_abs_true_oracle_gap',
         ])
         return metrics, empty_curve, empty_picks, empty_daily, empty_cs_diag
 
@@ -472,13 +509,49 @@ def backtest_topk_detailed(
             'rank_ic_std': 0.0,
             'rank_ic_ir': 0.0,
             'rank_ic_tstat': 0.0,
+            'ic_abs_mean': 0.0,
+            'ic_abs_std': 0.0,
+            'ic_abs_ir': 0.0,
+            'ic_abs_tstat': 0.0,
+            'rank_ic_abs_mean': 0.0,
+            'rank_ic_abs_std': 0.0,
+            'rank_ic_abs_ir': 0.0,
+            'rank_ic_abs_tstat': 0.0,
             'top1_true_rank_pct_mean': 0.0,
             'top1_true_rank_pct_std': 0.0,
+            'top1_true_rank_pct_excess_mean': 0.0,
             'top1_true_rank_pct_tstat': 0.0,
             'top1_hit_top_decile_pct': 0.0,
+            'top1_hit_top_decile_z': 0.0,
+            'top1_hit_bottom_decile_pct': 0.0,
+            'top1_hit_bottom_decile_z': 0.0,
             'spread_p10_mean': 0.0,
             'spread_p10_std': 0.0,
             'spread_p10_tstat': 0.0,
+            'top1_true_oracle_gap_mean': 0.0,
+            'top1_true_oracle_gap_median': 0.0,
+            'top1_abs_true_rank_pct_mean': 0.0,
+            'top1_abs_true_rank_pct_std': 0.0,
+            'top1_abs_true_rank_pct_excess_mean': 0.0,
+            'top1_abs_true_rank_pct_tstat': 0.0,
+            'top1_hit_top_decile_abs_pct': 0.0,
+            'top1_hit_top_decile_abs_z': 0.0,
+            'top1_hit_bottom_decile_abs_pct': 0.0,
+            'top1_hit_bottom_decile_abs_z': 0.0,
+            'spread_p10_abs_mean': 0.0,
+            'spread_p10_abs_std': 0.0,
+            'spread_p10_abs_tstat': 0.0,
+            'top1_abs_true_oracle_gap_mean': 0.0,
+            'top1_abs_true_oracle_gap_median': 0.0,
+            'flip_final_capital': float(initial_cash),
+            'flip_cumulative_return_pct': 0.0,
+            'flip_annualized_return_pct': 0.0,
+            'flip_max_drawdown_pct': 0.0,
+            'flip_sharpe': 0.0,
+            'flip_win_rate_pct': 0.0,
+            'flip_profit_factor': 0.0,
+            'flip_total_trades': 0,
+            'flip_trade_days': 0,
             'data_input_rows': input_rows,
             'data_input_trade_dates': input_trade_dates,
             'data_input_codes': input_codes,
@@ -499,15 +572,16 @@ def backtest_topk_detailed(
         empty_daily = pd.DataFrame(columns=[
             'trade_date', 'net_return', 'net_factor', 'capital',
             'return_pct', 'drawdown_pct', 'max_drawdown_pct',
-            'profit_factor', 'sharpe', 'ic', 'rank_ic'
+            'profit_factor', 'sharpe', 'ic', 'rank_ic', 'ic_abs', 'rank_ic_abs'
         ])
         empty_cs_diag = pd.DataFrame(columns=[
             'trade_date', 'n_candidates',
             'pred_mean', 'pred_std', 'pred_min', 'pred_max',
             'true_mean', 'true_std', 'true_min', 'true_max',
-            'ic', 'rank_ic', 'spread_p10',
+            'ic', 'rank_ic', 'ic_abs', 'rank_ic_abs', 'spread_p10', 'spread_p10_abs',
             'top1_code', 'top1_pred_return', 'top1_true_return',
-            'top1_true_rank_pct', 'top1_true_oracle_gap'
+            'top1_true_rank_pct', 'top1_true_oracle_gap',
+            'top1_abs_true_rank_pct', 'top1_abs_true_oracle_gap',
         ])
         return metrics, empty_curve, empty_picks, empty_daily, empty_cs_diag
 
@@ -531,13 +605,49 @@ def backtest_topk_detailed(
             'rank_ic_std': 0.0,
             'rank_ic_ir': 0.0,
             'rank_ic_tstat': 0.0,
+            'ic_abs_mean': 0.0,
+            'ic_abs_std': 0.0,
+            'ic_abs_ir': 0.0,
+            'ic_abs_tstat': 0.0,
+            'rank_ic_abs_mean': 0.0,
+            'rank_ic_abs_std': 0.0,
+            'rank_ic_abs_ir': 0.0,
+            'rank_ic_abs_tstat': 0.0,
             'top1_true_rank_pct_mean': 0.0,
             'top1_true_rank_pct_std': 0.0,
+            'top1_true_rank_pct_excess_mean': 0.0,
             'top1_true_rank_pct_tstat': 0.0,
             'top1_hit_top_decile_pct': 0.0,
+            'top1_hit_top_decile_z': 0.0,
+            'top1_hit_bottom_decile_pct': 0.0,
+            'top1_hit_bottom_decile_z': 0.0,
             'spread_p10_mean': 0.0,
             'spread_p10_std': 0.0,
             'spread_p10_tstat': 0.0,
+            'top1_true_oracle_gap_mean': 0.0,
+            'top1_true_oracle_gap_median': 0.0,
+            'top1_abs_true_rank_pct_mean': 0.0,
+            'top1_abs_true_rank_pct_std': 0.0,
+            'top1_abs_true_rank_pct_excess_mean': 0.0,
+            'top1_abs_true_rank_pct_tstat': 0.0,
+            'top1_hit_top_decile_abs_pct': 0.0,
+            'top1_hit_top_decile_abs_z': 0.0,
+            'top1_hit_bottom_decile_abs_pct': 0.0,
+            'top1_hit_bottom_decile_abs_z': 0.0,
+            'spread_p10_abs_mean': 0.0,
+            'spread_p10_abs_std': 0.0,
+            'spread_p10_abs_tstat': 0.0,
+            'top1_abs_true_oracle_gap_mean': 0.0,
+            'top1_abs_true_oracle_gap_median': 0.0,
+            'flip_final_capital': float(initial_cash),
+            'flip_cumulative_return_pct': 0.0,
+            'flip_annualized_return_pct': 0.0,
+            'flip_max_drawdown_pct': 0.0,
+            'flip_sharpe': 0.0,
+            'flip_win_rate_pct': 0.0,
+            'flip_profit_factor': 0.0,
+            'flip_total_trades': 0,
+            'flip_trade_days': 0,
             'data_input_rows': input_rows,
             'data_input_trade_dates': input_trade_dates,
             'data_input_codes': input_codes,
@@ -558,15 +668,16 @@ def backtest_topk_detailed(
         empty_daily = pd.DataFrame(columns=[
             'trade_date', 'net_return', 'net_factor', 'capital',
             'return_pct', 'drawdown_pct', 'max_drawdown_pct',
-            'profit_factor', 'sharpe', 'ic', 'rank_ic'
+            'profit_factor', 'sharpe', 'ic', 'rank_ic', 'ic_abs', 'rank_ic_abs'
         ])
         empty_cs_diag = pd.DataFrame(columns=[
             'trade_date', 'n_candidates',
             'pred_mean', 'pred_std', 'pred_min', 'pred_max',
             'true_mean', 'true_std', 'true_min', 'true_max',
-            'ic', 'rank_ic', 'spread_p10',
+            'ic', 'rank_ic', 'ic_abs', 'rank_ic_abs', 'spread_p10', 'spread_p10_abs',
             'top1_code', 'top1_pred_return', 'top1_true_return',
-            'top1_true_rank_pct', 'top1_true_oracle_gap'
+            'top1_true_rank_pct', 'top1_true_oracle_gap',
+            'top1_abs_true_rank_pct', 'top1_abs_true_oracle_gap',
         ])
         return metrics, empty_curve, empty_picks, empty_daily, empty_cs_diag
 
@@ -615,9 +726,12 @@ def backtest_topk_detailed(
         n = int(len(group))
         pred = group['pred_return'].to_numpy(dtype=float, copy=False)
         true = group['true_return'].to_numpy(dtype=float, copy=False)
+        true_abs = np.abs(true)
 
         ic = _safe_pearson_corr(pred, true)
         rank_ic = _safe_rank_ic(pred, true)
+        ic_abs = _safe_pearson_corr(pred, true_abs)
+        rank_ic_abs = _safe_rank_ic(pred, true_abs)
 
         pred_mean = float(np.mean(pred)) if n else float('nan')
         pred_std = float(np.std(pred)) if n else float('nan')
@@ -630,18 +744,24 @@ def backtest_topk_detailed(
         true_max = float(np.max(true)) if n else float('nan')
 
         spread_p10 = float('nan')
+        spread_p10_abs = float('nan')
         if n >= 2:
             m = max(1, int(np.floor(n * 0.1)))
             order = np.argsort(pred)
             bot = true[order[:m]]
             top = true[order[-m:]]
             spread_p10 = float(np.mean(top) - np.mean(bot))
+            bot_abs = true_abs[order[:m]]
+            top_abs = true_abs[order[-m:]]
+            spread_p10_abs = float(np.mean(top_abs) - np.mean(bot_abs))
 
         top1_code = None
         top1_pred = float('nan')
         top1_true = float('nan')
         top1_rank_pct = float('nan')
         top1_oracle_gap = float('nan')
+        top1_abs_rank_pct = float('nan')
+        top1_abs_oracle_gap = float('nan')
         try:
             top1_row = top1_map.loc[trade_date]
             top1_code = str(top1_row.get('code'))
@@ -654,6 +774,14 @@ def backtest_topk_detailed(
                 avg_rank = (lo + hi + 1) / 2.0  # 1-based, tie-aware
                 top1_rank_pct = float(avg_rank / max(1, len(true_sorted)))
                 top1_oracle_gap = float(true_sorted[-1] - top1_true)
+
+                abs_val = float(abs(top1_true))
+                abs_sorted = np.sort(true_abs)
+                lo = int(np.searchsorted(abs_sorted, abs_val, side='left'))
+                hi = int(np.searchsorted(abs_sorted, abs_val, side='right'))
+                avg_rank = (lo + hi + 1) / 2.0  # 1-based, tie-aware
+                top1_abs_rank_pct = float(avg_rank / max(1, len(abs_sorted)))
+                top1_abs_oracle_gap = float(abs_sorted[-1] - abs_val)
         except Exception:
             pass
 
@@ -670,12 +798,17 @@ def backtest_topk_detailed(
             'true_max': true_max,
             'ic': ic,
             'rank_ic': rank_ic,
+            'ic_abs': ic_abs,
+            'rank_ic_abs': rank_ic_abs,
             'spread_p10': spread_p10,
+            'spread_p10_abs': spread_p10_abs,
             'top1_code': top1_code,
             'top1_pred_return': top1_pred,
             'top1_true_return': top1_true,
             'top1_true_rank_pct': top1_rank_pct,
             'top1_true_oracle_gap': top1_oracle_gap,
+            'top1_abs_true_rank_pct': top1_abs_rank_pct,
+            'top1_abs_true_oracle_gap': top1_abs_oracle_gap,
         })
     cs_diag_df = pd.DataFrame(cs_rows)
 
@@ -703,12 +836,66 @@ def backtest_topk_detailed(
     ic_mean, ic_std, ic_ir, ic_tstat = _summarize_ic(ic_vals)
     rank_ic_mean, rank_ic_std, rank_ic_ir, rank_ic_tstat = _summarize_ic(rank_ic_vals)
 
+    ic_abs_vals = cs_diag_df['ic_abs'].replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=False)
+    rank_ic_abs_vals = cs_diag_df['rank_ic_abs'].replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=False)
+    ic_abs_mean, ic_abs_std, ic_abs_ir, ic_abs_tstat = _summarize_ic(ic_abs_vals)
+    rank_ic_abs_mean, rank_ic_abs_std, rank_ic_abs_ir, rank_ic_abs_tstat = _summarize_ic(rank_ic_abs_vals)
+
     top1_rank_vals = cs_diag_df['top1_true_rank_pct'].replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=False)
-    top1_rank_mean, top1_rank_std, top1_rank_tstat = _summarize_stat(top1_rank_vals)
+    top1_rank_mean = float(np.mean(top1_rank_vals)) if len(top1_rank_vals) else 0.0
+    top1_rank_std = float(np.std(top1_rank_vals, ddof=1)) if len(top1_rank_vals) > 1 else 0.0
+    if len(top1_rank_vals) > 1 and top1_rank_std > 0:
+        top1_rank_tstat = float((top1_rank_mean - 0.5) / (top1_rank_std / np.sqrt(len(top1_rank_vals))))
+    else:
+        top1_rank_tstat = 0.0
+    top1_rank_excess_mean = float((top1_rank_mean - 0.5) * 100.0) if len(top1_rank_vals) else 0.0
+
     top1_hit_top_decile = float(np.mean(top1_rank_vals >= 0.9) * 100.0) if len(top1_rank_vals) else 0.0
+    top1_hit_bottom_decile = float(np.mean(top1_rank_vals <= 0.1) * 100.0) if len(top1_rank_vals) else 0.0
+    if len(top1_rank_vals):
+        n_hit = float(len(top1_rank_vals))
+        p0 = 0.1
+        denom = np.sqrt(p0 * (1.0 - p0) / n_hit)
+        top1_hit_top_decile_z = float((top1_hit_top_decile / 100.0 - p0) / denom) if denom > 0 else 0.0
+        top1_hit_bottom_decile_z = float((top1_hit_bottom_decile / 100.0 - p0) / denom) if denom > 0 else 0.0
+    else:
+        top1_hit_top_decile_z = 0.0
+        top1_hit_bottom_decile_z = 0.0
 
     spread_vals = cs_diag_df['spread_p10'].replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=False)
     spread_mean, spread_std, spread_tstat = _summarize_stat(spread_vals)
+
+    spread_abs_vals = cs_diag_df['spread_p10_abs'].replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=False)
+    spread_abs_mean, spread_abs_std, spread_abs_tstat = _summarize_stat(spread_abs_vals)
+
+    oracle_gap_vals = cs_diag_df['top1_true_oracle_gap'].replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=False)
+    oracle_gap_mean = float(np.mean(oracle_gap_vals)) if len(oracle_gap_vals) else 0.0
+    oracle_gap_median = float(np.median(oracle_gap_vals)) if len(oracle_gap_vals) else 0.0
+
+    oracle_gap_abs_vals = cs_diag_df['top1_abs_true_oracle_gap'].replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=False)
+    oracle_gap_abs_mean = float(np.mean(oracle_gap_abs_vals)) if len(oracle_gap_abs_vals) else 0.0
+    oracle_gap_abs_median = float(np.median(oracle_gap_abs_vals)) if len(oracle_gap_abs_vals) else 0.0
+
+    top1_abs_rank_vals = cs_diag_df['top1_abs_true_rank_pct'].replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=False)
+    top1_abs_rank_mean = float(np.mean(top1_abs_rank_vals)) if len(top1_abs_rank_vals) else 0.0
+    top1_abs_rank_std = float(np.std(top1_abs_rank_vals, ddof=1)) if len(top1_abs_rank_vals) > 1 else 0.0
+    if len(top1_abs_rank_vals) > 1 and top1_abs_rank_std > 0:
+        top1_abs_rank_tstat = float((top1_abs_rank_mean - 0.5) / (top1_abs_rank_std / np.sqrt(len(top1_abs_rank_vals))))
+    else:
+        top1_abs_rank_tstat = 0.0
+    top1_abs_rank_excess_mean = float((top1_abs_rank_mean - 0.5) * 100.0) if len(top1_abs_rank_vals) else 0.0
+
+    top1_hit_top_decile_abs = float(np.mean(top1_abs_rank_vals >= 0.9) * 100.0) if len(top1_abs_rank_vals) else 0.0
+    top1_hit_bottom_decile_abs = float(np.mean(top1_abs_rank_vals <= 0.1) * 100.0) if len(top1_abs_rank_vals) else 0.0
+    if len(top1_abs_rank_vals):
+        n_hit = float(len(top1_abs_rank_vals))
+        p0 = 0.1
+        denom = np.sqrt(p0 * (1.0 - p0) / n_hit)
+        top1_hit_top_decile_abs_z = float((top1_hit_top_decile_abs / 100.0 - p0) / denom) if denom > 0 else 0.0
+        top1_hit_bottom_decile_abs_z = float((top1_hit_bottom_decile_abs / 100.0 - p0) / denom) if denom > 0 else 0.0
+    else:
+        top1_hit_top_decile_abs_z = 0.0
+        top1_hit_bottom_decile_abs_z = 0.0
 
     pick_factor = (1 - commission) * (1 + picks['true_return'].values) * (1 - commission - stamp)
     pick_factor = np.where(np.isfinite(pick_factor) & (pick_factor > 0), pick_factor, np.nan)
@@ -819,6 +1006,98 @@ def backtest_topk_detailed(
 
     total_trades = trade_days * topk * 2
 
+    def _portfolio_metrics_from_picks(picks_any: pd.DataFrame) -> dict:
+        if picks_any is None or picks_any.empty:
+            return {
+                'final_capital': float(initial_cash),
+                'cumulative_return_pct': 0.0,
+                'annualized_return_pct': 0.0,
+                'max_drawdown_pct': 0.0,
+                'sharpe': 0.0,
+                'win_rate_pct': 0.0,
+                'profit_factor': 0.0,
+                'total_trades': 0,
+                'trade_days': 0,
+            }
+        pf = (1 - commission) * (1 + picks_any['true_return'].values) * (1 - commission - stamp)
+        pf = np.where(np.isfinite(pf) & (pf > 0), pf, np.nan)
+        tmp = picks_any[['trade_date']].copy()
+        tmp['net_factor'] = pf
+        net_factor_by_date_any = tmp.groupby('trade_date', sort=True)['net_factor'].mean().dropna()
+
+        net_factor_all_any = pd.Series(1.0, index=all_trade_dates)
+        net_factor_all_any.loc[net_factor_by_date_any.index] = net_factor_by_date_any.values
+        capital_curve_any = float(initial_cash) * net_factor_all_any.cumprod()
+        curve_dates = net_factor_all_any.index
+        final_capital_any = float(capital_curve_any.iloc[-1]) if len(capital_curve_any) else float(initial_cash)
+
+        if len(curve_dates) < 2:
+            total_years_any = 0.0
+        else:
+            total_days_any = (pd.Timestamp(curve_dates[-1]) - pd.Timestamp(curve_dates[0])).days
+            total_years_any = total_days_any / 365.25 if total_days_any > 0 else 0.0
+
+        cumulative_return_any = (final_capital_any - initial_cash) / initial_cash if initial_cash > 0 else 0.0
+        if total_years_any > 0 and initial_cash > 0 and final_capital_any > 0:
+            annualized_return_any = (final_capital_any / initial_cash) ** (1 / total_years_any) - 1
+        elif final_capital_any <= 0:
+            annualized_return_any = -1.0
+        else:
+            annualized_return_any = 0.0
+
+        capital_values_any = capital_curve_any.values
+        peak_any = np.maximum.accumulate(capital_values_any)
+        peak_any = np.where(peak_any > 0, peak_any, np.nan)
+        drawdowns_any = (peak_any - capital_values_any) / peak_any
+        max_drawdown_any = float(np.max(drawdowns_any)) if len(drawdowns_any) else 0.0
+
+        if len(capital_values_any) > 1:
+            denom_any = capital_values_any[:-1]
+            num_any = np.diff(capital_values_any)
+            daily_returns_any = np.zeros_like(num_any, dtype=float)
+            valid_any = denom_any > 0
+            daily_returns_any[valid_any] = num_any[valid_any] / denom_any[valid_any]
+        else:
+            daily_returns_any = np.array([0.0])
+        annual_vol_any = np.std(daily_returns_any) * np.sqrt(252) if len(daily_returns_any) else 0.0
+        sharpe_any = (annualized_return_any - risk_free) / annual_vol_any if annual_vol_any > 0 else 0.0
+
+        trade_net_factor_any = net_factor_by_date_any.values
+        trade_days_any = int(len(trade_net_factor_any))
+        if trade_days_any > 0:
+            trade_capital_any = float(initial_cash) * np.cumprod(trade_net_factor_any)
+            prev_cash_any = np.concatenate([[float(initial_cash)], trade_capital_any[:-1]])
+            trade_net_return_any = trade_net_factor_any - 1.0
+            wins_any = trade_net_return_any[trade_net_return_any > 0]
+            win_rate_any = (len(wins_any) / len(trade_net_return_any)) if trade_net_return_any.size else 0.0
+            trade_profit_any = prev_cash_any * trade_net_return_any
+            total_profit_sum_any = float(np.sum(trade_profit_any[trade_profit_any > 0]))
+            total_loss_sum_any = float(np.sum(-trade_profit_any[trade_profit_any < 0]))
+            profit_factor_any = (total_profit_sum_any / total_loss_sum_any) if total_loss_sum_any > 0 else float('inf') if total_profit_sum_any > 0 else 0.0
+        else:
+            win_rate_any = 0.0
+            profit_factor_any = 0.0
+
+        total_trades_any = trade_days_any * topk * 2
+        return {
+            'final_capital': float(final_capital_any),
+            'cumulative_return_pct': float(cumulative_return_any * 100),
+            'annualized_return_pct': float(annualized_return_any * 100),
+            'max_drawdown_pct': float(max_drawdown_any * 100),
+            'sharpe': float(sharpe_any),
+            'win_rate_pct': float(win_rate_any * 100),
+            'profit_factor': float(profit_factor_any),
+            'total_trades': int(total_trades_any),
+            'trade_days': int(trade_days_any),
+        }
+
+    picks_flip = (
+        df.sort_values(['trade_date', 'pred_return'], ascending=[True, True])
+          .groupby('trade_date', sort=False, as_index=False)
+          .head(topk)
+    )
+    flip_stats = _portfolio_metrics_from_picks(picks_flip)
+
     metrics = {
         'final_capital': float(final_capital),
         'cumulative_return_pct': float(cumulative_return * 100),
@@ -837,13 +1116,49 @@ def backtest_topk_detailed(
         'rank_ic_std': float(rank_ic_std),
         'rank_ic_ir': float(rank_ic_ir),
         'rank_ic_tstat': float(rank_ic_tstat),
+        'ic_abs_mean': float(ic_abs_mean),
+        'ic_abs_std': float(ic_abs_std),
+        'ic_abs_ir': float(ic_abs_ir),
+        'ic_abs_tstat': float(ic_abs_tstat),
+        'rank_ic_abs_mean': float(rank_ic_abs_mean),
+        'rank_ic_abs_std': float(rank_ic_abs_std),
+        'rank_ic_abs_ir': float(rank_ic_abs_ir),
+        'rank_ic_abs_tstat': float(rank_ic_abs_tstat),
         'top1_true_rank_pct_mean': float(top1_rank_mean * 100.0),
         'top1_true_rank_pct_std': float(top1_rank_std * 100.0),
+        'top1_true_rank_pct_excess_mean': float(top1_rank_excess_mean),
         'top1_true_rank_pct_tstat': float(top1_rank_tstat),
         'top1_hit_top_decile_pct': float(top1_hit_top_decile),
+        'top1_hit_top_decile_z': float(top1_hit_top_decile_z),
+        'top1_hit_bottom_decile_pct': float(top1_hit_bottom_decile),
+        'top1_hit_bottom_decile_z': float(top1_hit_bottom_decile_z),
         'spread_p10_mean': float(spread_mean),
         'spread_p10_std': float(spread_std),
         'spread_p10_tstat': float(spread_tstat),
+        'top1_true_oracle_gap_mean': float(oracle_gap_mean),
+        'top1_true_oracle_gap_median': float(oracle_gap_median),
+        'top1_abs_true_rank_pct_mean': float(top1_abs_rank_mean * 100.0),
+        'top1_abs_true_rank_pct_std': float(top1_abs_rank_std * 100.0),
+        'top1_abs_true_rank_pct_excess_mean': float(top1_abs_rank_excess_mean),
+        'top1_abs_true_rank_pct_tstat': float(top1_abs_rank_tstat),
+        'top1_hit_top_decile_abs_pct': float(top1_hit_top_decile_abs),
+        'top1_hit_top_decile_abs_z': float(top1_hit_top_decile_abs_z),
+        'top1_hit_bottom_decile_abs_pct': float(top1_hit_bottom_decile_abs),
+        'top1_hit_bottom_decile_abs_z': float(top1_hit_bottom_decile_abs_z),
+        'spread_p10_abs_mean': float(spread_abs_mean),
+        'spread_p10_abs_std': float(spread_abs_std),
+        'spread_p10_abs_tstat': float(spread_abs_tstat),
+        'top1_abs_true_oracle_gap_mean': float(oracle_gap_abs_mean),
+        'top1_abs_true_oracle_gap_median': float(oracle_gap_abs_median),
+        'flip_final_capital': float(flip_stats['final_capital']),
+        'flip_cumulative_return_pct': float(flip_stats['cumulative_return_pct']),
+        'flip_annualized_return_pct': float(flip_stats['annualized_return_pct']),
+        'flip_max_drawdown_pct': float(flip_stats['max_drawdown_pct']),
+        'flip_sharpe': float(flip_stats['sharpe']),
+        'flip_win_rate_pct': float(flip_stats['win_rate_pct']),
+        'flip_profit_factor': float(flip_stats['profit_factor']),
+        'flip_total_trades': int(flip_stats['total_trades']),
+        'flip_trade_days': int(flip_stats['trade_days']),
         'data_input_rows': input_rows,
         'data_input_trade_dates': input_trade_dates,
         'data_input_codes': input_codes,
