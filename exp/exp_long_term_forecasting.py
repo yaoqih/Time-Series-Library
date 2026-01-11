@@ -63,7 +63,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         return data_set, data_loader
 
     def _select_optimizer(self):
-        model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
+        weight_decay = float(getattr(self.args, 'weight_decay', 0.0) or 0.0)
+        model_optim = optim.Adam(
+            self.model.parameters(),
+            lr=self.args.learning_rate,
+            weight_decay=weight_decay,
+        )
         return model_optim
 
     def _select_criterion(self):
@@ -256,10 +261,17 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                 if self.args.use_amp:
                     scaler.scale(loss).backward()
+                    grad_clip = float(getattr(self.args, 'grad_clip', 0.0) or 0.0)
+                    if grad_clip > 0:
+                        scaler.unscale_(model_optim)
+                        nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_clip)
                     scaler.step(model_optim)
                     scaler.update()
                 else:
                     loss.backward()
+                    grad_clip = float(getattr(self.args, 'grad_clip', 0.0) or 0.0)
+                    if grad_clip > 0:
+                        nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_clip)
                     model_optim.step()
 
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))

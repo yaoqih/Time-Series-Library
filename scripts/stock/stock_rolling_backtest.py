@@ -278,6 +278,47 @@ def _compute_sharpe_series(dates, capital, initial_cash, risk_free):
     return sharpe_values
 
 
+def _safe_pearson_corr(x: np.ndarray, y: np.ndarray, *, eps: float = 1e-12) -> float:
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if x.shape != y.shape:
+        return float('nan')
+    if x.size < 2:
+        return float('nan')
+    mask = np.isfinite(x) & np.isfinite(y)
+    if not mask.any():
+        return float('nan')
+    x = x[mask]
+    y = y[mask]
+    if x.size < 2:
+        return float('nan')
+    x = x - float(x.mean())
+    y = y - float(y.mean())
+    xx = float(np.dot(x, x))
+    yy = float(np.dot(y, y))
+    if xx <= eps or yy <= eps:
+        return float('nan')
+    return float(np.dot(x, y) / np.sqrt(xx * yy))
+
+
+def _safe_rank_ic(x: np.ndarray, y: np.ndarray) -> float:
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if x.shape != y.shape:
+        return float('nan')
+    if x.size < 2:
+        return float('nan')
+    mask = np.isfinite(x) & np.isfinite(y)
+    if mask.sum() < 2:
+        return float('nan')
+    x = x[mask]
+    y = y[mask]
+    # tie-aware ranks (average ranks)
+    rx = pd.Series(x).rank(method='average').to_numpy(dtype=float)
+    ry = pd.Series(y).rank(method='average').to_numpy(dtype=float)
+    return _safe_pearson_corr(rx, ry)
+
+
 def backtest_topk_detailed(
     pred_df,
     initial_cash,
@@ -312,6 +353,21 @@ def backtest_topk_detailed(
             'profit_factor': 0.0,
             'total_trades': 0,
             'trade_days': 0,
+            'ic_mean': 0.0,
+            'ic_std': 0.0,
+            'ic_ir': 0.0,
+            'ic_tstat': 0.0,
+            'rank_ic_mean': 0.0,
+            'rank_ic_std': 0.0,
+            'rank_ic_ir': 0.0,
+            'rank_ic_tstat': 0.0,
+            'top1_true_rank_pct_mean': 0.0,
+            'top1_true_rank_pct_std': 0.0,
+            'top1_true_rank_pct_tstat': 0.0,
+            'top1_hit_top_decile_pct': 0.0,
+            'spread_p10_mean': 0.0,
+            'spread_p10_std': 0.0,
+            'spread_p10_tstat': 0.0,
             'data_input_rows': input_rows,
             'data_input_trade_dates': input_trade_dates,
             'data_input_codes': input_codes,
@@ -332,9 +388,17 @@ def backtest_topk_detailed(
         empty_daily = pd.DataFrame(columns=[
             'trade_date', 'net_return', 'net_factor', 'capital',
             'return_pct', 'drawdown_pct', 'max_drawdown_pct',
-            'profit_factor', 'sharpe'
+            'profit_factor', 'sharpe', 'ic', 'rank_ic'
         ])
-        return metrics, empty_curve, empty_picks, empty_daily
+        empty_cs_diag = pd.DataFrame(columns=[
+            'trade_date', 'n_candidates',
+            'pred_mean', 'pred_std', 'pred_min', 'pred_max',
+            'true_mean', 'true_std', 'true_min', 'true_max',
+            'ic', 'rank_ic', 'spread_p10',
+            'top1_code', 'top1_pred_return', 'top1_true_return',
+            'top1_true_rank_pct', 'top1_true_oracle_gap'
+        ])
+        return metrics, empty_curve, empty_picks, empty_daily, empty_cs_diag
 
     df = pred_df.copy()
     df['trade_date'] = pd.to_datetime(df['trade_date'])
@@ -400,6 +464,21 @@ def backtest_topk_detailed(
             'profit_factor': 0.0,
             'total_trades': 0,
             'trade_days': 0,
+            'ic_mean': 0.0,
+            'ic_std': 0.0,
+            'ic_ir': 0.0,
+            'ic_tstat': 0.0,
+            'rank_ic_mean': 0.0,
+            'rank_ic_std': 0.0,
+            'rank_ic_ir': 0.0,
+            'rank_ic_tstat': 0.0,
+            'top1_true_rank_pct_mean': 0.0,
+            'top1_true_rank_pct_std': 0.0,
+            'top1_true_rank_pct_tstat': 0.0,
+            'top1_hit_top_decile_pct': 0.0,
+            'spread_p10_mean': 0.0,
+            'spread_p10_std': 0.0,
+            'spread_p10_tstat': 0.0,
             'data_input_rows': input_rows,
             'data_input_trade_dates': input_trade_dates,
             'data_input_codes': input_codes,
@@ -420,9 +499,17 @@ def backtest_topk_detailed(
         empty_daily = pd.DataFrame(columns=[
             'trade_date', 'net_return', 'net_factor', 'capital',
             'return_pct', 'drawdown_pct', 'max_drawdown_pct',
-            'profit_factor', 'sharpe'
+            'profit_factor', 'sharpe', 'ic', 'rank_ic'
         ])
-        return metrics, empty_curve, empty_picks, empty_daily
+        empty_cs_diag = pd.DataFrame(columns=[
+            'trade_date', 'n_candidates',
+            'pred_mean', 'pred_std', 'pred_min', 'pred_max',
+            'true_mean', 'true_std', 'true_min', 'true_max',
+            'ic', 'rank_ic', 'spread_p10',
+            'top1_code', 'top1_pred_return', 'top1_true_return',
+            'top1_true_rank_pct', 'top1_true_oracle_gap'
+        ])
+        return metrics, empty_curve, empty_picks, empty_daily, empty_cs_diag
 
     all_trade_dates = df['trade_date'].drop_duplicates().sort_values()
     if all_trade_dates.empty:
@@ -436,6 +523,21 @@ def backtest_topk_detailed(
             'profit_factor': 0.0,
             'total_trades': 0,
             'trade_days': 0,
+            'ic_mean': 0.0,
+            'ic_std': 0.0,
+            'ic_ir': 0.0,
+            'ic_tstat': 0.0,
+            'rank_ic_mean': 0.0,
+            'rank_ic_std': 0.0,
+            'rank_ic_ir': 0.0,
+            'rank_ic_tstat': 0.0,
+            'top1_true_rank_pct_mean': 0.0,
+            'top1_true_rank_pct_std': 0.0,
+            'top1_true_rank_pct_tstat': 0.0,
+            'top1_hit_top_decile_pct': 0.0,
+            'spread_p10_mean': 0.0,
+            'spread_p10_std': 0.0,
+            'spread_p10_tstat': 0.0,
             'data_input_rows': input_rows,
             'data_input_trade_dates': input_trade_dates,
             'data_input_codes': input_codes,
@@ -456,9 +558,17 @@ def backtest_topk_detailed(
         empty_daily = pd.DataFrame(columns=[
             'trade_date', 'net_return', 'net_factor', 'capital',
             'return_pct', 'drawdown_pct', 'max_drawdown_pct',
-            'profit_factor', 'sharpe'
+            'profit_factor', 'sharpe', 'ic', 'rank_ic'
         ])
-        return metrics, empty_curve, empty_picks, empty_daily
+        empty_cs_diag = pd.DataFrame(columns=[
+            'trade_date', 'n_candidates',
+            'pred_mean', 'pred_std', 'pred_min', 'pred_max',
+            'true_mean', 'true_std', 'true_min', 'true_max',
+            'ic', 'rank_ic', 'spread_p10',
+            'top1_code', 'top1_pred_return', 'top1_true_return',
+            'top1_true_rank_pct', 'top1_true_oracle_gap'
+        ])
+        return metrics, empty_curve, empty_picks, empty_daily, empty_cs_diag
 
     if 'exit_date' in df.columns:
         # Warn if exit_date doesn't line up with next trade_date (common sign of multi-day horizon with daily compounding).
@@ -491,11 +601,115 @@ def backtest_topk_detailed(
         except Exception:
             pass
 
+    # Pred-score sorted view used both for picks and for top1 diagnostics.
+    sorted_df = df.sort_values(['trade_date', 'pred_return'], ascending=[True, False])
     picks = (
-        df.sort_values(['trade_date', 'pred_return'], ascending=[True, False])
-          .groupby('trade_date', sort=False, as_index=False)
-          .head(topk)
+        sorted_df.groupby('trade_date', sort=False, as_index=False)
+                 .head(topk)
     )
+    top1_df = sorted_df.groupby('trade_date', sort=False, as_index=False).head(1)
+    top1_map = top1_df.set_index('trade_date')
+
+    cs_rows = []
+    for trade_date, group in df.groupby('trade_date', sort=True):
+        n = int(len(group))
+        pred = group['pred_return'].to_numpy(dtype=float, copy=False)
+        true = group['true_return'].to_numpy(dtype=float, copy=False)
+
+        ic = _safe_pearson_corr(pred, true)
+        rank_ic = _safe_rank_ic(pred, true)
+
+        pred_mean = float(np.mean(pred)) if n else float('nan')
+        pred_std = float(np.std(pred)) if n else float('nan')
+        pred_min = float(np.min(pred)) if n else float('nan')
+        pred_max = float(np.max(pred)) if n else float('nan')
+
+        true_mean = float(np.mean(true)) if n else float('nan')
+        true_std = float(np.std(true)) if n else float('nan')
+        true_min = float(np.min(true)) if n else float('nan')
+        true_max = float(np.max(true)) if n else float('nan')
+
+        spread_p10 = float('nan')
+        if n >= 2:
+            m = max(1, int(np.floor(n * 0.1)))
+            order = np.argsort(pred)
+            bot = true[order[:m]]
+            top = true[order[-m:]]
+            spread_p10 = float(np.mean(top) - np.mean(bot))
+
+        top1_code = None
+        top1_pred = float('nan')
+        top1_true = float('nan')
+        top1_rank_pct = float('nan')
+        top1_oracle_gap = float('nan')
+        try:
+            top1_row = top1_map.loc[trade_date]
+            top1_code = str(top1_row.get('code'))
+            top1_pred = float(top1_row.get('pred_return'))
+            top1_true = float(top1_row.get('true_return'))
+            if n > 0 and np.isfinite(top1_true):
+                true_sorted = np.sort(true)
+                lo = int(np.searchsorted(true_sorted, top1_true, side='left'))
+                hi = int(np.searchsorted(true_sorted, top1_true, side='right'))
+                avg_rank = (lo + hi + 1) / 2.0  # 1-based, tie-aware
+                top1_rank_pct = float(avg_rank / max(1, len(true_sorted)))
+                top1_oracle_gap = float(true_sorted[-1] - top1_true)
+        except Exception:
+            pass
+
+        cs_rows.append({
+            'trade_date': trade_date,
+            'n_candidates': n,
+            'pred_mean': pred_mean,
+            'pred_std': pred_std,
+            'pred_min': pred_min,
+            'pred_max': pred_max,
+            'true_mean': true_mean,
+            'true_std': true_std,
+            'true_min': true_min,
+            'true_max': true_max,
+            'ic': ic,
+            'rank_ic': rank_ic,
+            'spread_p10': spread_p10,
+            'top1_code': top1_code,
+            'top1_pred_return': top1_pred,
+            'top1_true_return': top1_true,
+            'top1_true_rank_pct': top1_rank_pct,
+            'top1_true_oracle_gap': top1_oracle_gap,
+        })
+    cs_diag_df = pd.DataFrame(cs_rows)
+
+    def _summarize_ic(values: np.ndarray) -> tuple[float, float, float, float]:
+        n = int(len(values))
+        if n == 0:
+            return 0.0, 0.0, 0.0, 0.0
+        mean = float(np.mean(values))
+        std = float(np.std(values, ddof=1)) if n > 1 else 0.0
+        ir = float(mean / std * np.sqrt(252)) if std > 0 else 0.0
+        tstat = float(mean / (std / np.sqrt(n))) if std > 0 else 0.0
+        return mean, std, ir, tstat
+
+    def _summarize_stat(values: np.ndarray) -> tuple[float, float, float]:
+        n = int(len(values))
+        if n == 0:
+            return 0.0, 0.0, 0.0
+        mean = float(np.mean(values))
+        std = float(np.std(values, ddof=1)) if n > 1 else 0.0
+        tstat = float(mean / (std / np.sqrt(n))) if std > 0 else 0.0
+        return mean, std, tstat
+
+    ic_vals = cs_diag_df['ic'].replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=False)
+    rank_ic_vals = cs_diag_df['rank_ic'].replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=False)
+    ic_mean, ic_std, ic_ir, ic_tstat = _summarize_ic(ic_vals)
+    rank_ic_mean, rank_ic_std, rank_ic_ir, rank_ic_tstat = _summarize_ic(rank_ic_vals)
+
+    top1_rank_vals = cs_diag_df['top1_true_rank_pct'].replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=False)
+    top1_rank_mean, top1_rank_std, top1_rank_tstat = _summarize_stat(top1_rank_vals)
+    top1_hit_top_decile = float(np.mean(top1_rank_vals >= 0.9) * 100.0) if len(top1_rank_vals) else 0.0
+
+    spread_vals = cs_diag_df['spread_p10'].replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=False)
+    spread_mean, spread_std, spread_tstat = _summarize_stat(spread_vals)
+
     pick_factor = (1 - commission) * (1 + picks['true_return'].values) * (1 - commission - stamp)
     pick_factor = np.where(np.isfinite(pick_factor) & (pick_factor > 0), pick_factor, np.nan)
     picks = picks.copy()
@@ -615,6 +829,21 @@ def backtest_topk_detailed(
         'profit_factor': float(profit_factor_final),
         'total_trades': int(total_trades),
         'trade_days': int(trade_days),
+        'ic_mean': float(ic_mean),
+        'ic_std': float(ic_std),
+        'ic_ir': float(ic_ir),
+        'ic_tstat': float(ic_tstat),
+        'rank_ic_mean': float(rank_ic_mean),
+        'rank_ic_std': float(rank_ic_std),
+        'rank_ic_ir': float(rank_ic_ir),
+        'rank_ic_tstat': float(rank_ic_tstat),
+        'top1_true_rank_pct_mean': float(top1_rank_mean * 100.0),
+        'top1_true_rank_pct_std': float(top1_rank_std * 100.0),
+        'top1_true_rank_pct_tstat': float(top1_rank_tstat),
+        'top1_hit_top_decile_pct': float(top1_hit_top_decile),
+        'spread_p10_mean': float(spread_mean),
+        'spread_p10_std': float(spread_std),
+        'spread_p10_tstat': float(spread_tstat),
         'data_input_rows': input_rows,
         'data_input_trade_dates': input_trade_dates,
         'data_input_codes': input_codes,
@@ -629,6 +858,8 @@ def backtest_topk_detailed(
     }
 
     if not daily_df.empty:
+        if not cs_diag_df.empty:
+            daily_df = daily_df.merge(cs_diag_df, on='trade_date', how='left')
         capital = daily_df['capital'].values
         daily_df['return_pct'] = (capital / initial_cash - 1.0) * 100.0
         peak = np.maximum.accumulate(capital)
@@ -638,7 +869,7 @@ def backtest_topk_detailed(
         daily_df['max_drawdown_pct'] = np.maximum.accumulate(drawdown) * 100.0
         sharpe_series = _compute_sharpe_series(daily_df['trade_date'], capital, initial_cash, risk_free)
         daily_df['sharpe'] = sharpe_series
-    return metrics, curve_df, picks_df, daily_df
+    return metrics, curve_df, picks_df, daily_df, cs_diag_df
 
 
 def predict_dataset(exp, data_set, data_loader, args):
@@ -848,7 +1079,9 @@ def parse_args():
     parser.add_argument('--train_epochs', type=int, default=10, help='train epochs')
     parser.add_argument('--batch_size', type=int, default=2, help='batch size')
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='learning rate')
-    parser.add_argument('--loss', type=str, default='HYBRID_WIC', help='loss function (e.g., MSE, CCC)')
+    parser.add_argument('--weight_decay', type=float, default=0.0, help='weight decay for Adam')
+    parser.add_argument('--grad_clip', type=float, default=0.0, help='clip grad norm (0 disables)')
+    parser.add_argument('--loss', type=str, default='RISK_LISTNET', help='loss function (e.g., MSE, CCC)')
     parser.add_argument('--ic_weight_beta', type=float, default=5.0,
                         help='beta for Weighted IC loss softmax weighting')
     parser.add_argument('--hybrid_ic_weight', type=float, default=0.7,
@@ -1120,7 +1353,7 @@ def _run_window(base_args, model_name, window, use_window_seed=False):
                 drop_last=False
             )
             pred_df = predict_dataset(exp, data_set, data_loader, args_run)
-            metrics, curve_df, picks_df, daily_df = backtest_topk_detailed(
+            metrics, curve_df, picks_df, daily_df, cs_diag_df = backtest_topk_detailed(
                 pred_df,
                 initial_cash=args_run.initial_cash,
                 topk=args_run.topk,
@@ -1136,6 +1369,8 @@ def _run_window(base_args, model_name, window, use_window_seed=False):
             curve_df.to_csv(os.path.join(split_dir, 'equity_curve.csv'), index=False)
             picks_df.to_csv(os.path.join(split_dir, 'daily_picks.csv'), index=False)
             daily_df.to_csv(os.path.join(split_dir, 'daily_metrics.csv'), index=False)
+            if cs_diag_df is not None:
+                cs_diag_df.to_csv(os.path.join(split_dir, 'cross_sectional_diagnostics.csv'), index=False)
             with open(os.path.join(split_dir, 'metrics.json'), 'w') as f:
                 json.dump(metrics, f, indent=2)
 
