@@ -90,13 +90,28 @@ class mase_loss(nn.Module):
 
 
 class CCCLoss(nn.Module):
+    supports_mask = True
+
     def __init__(self, eps: float = 1e-8):
         super().__init__()
         self.eps = eps
 
-    def forward(self, pred: t.Tensor, target: t.Tensor) -> t.Tensor:
-        pred = pred.reshape(-1).float()
-        target = target.reshape(-1).float()
+    def forward(self, pred: t.Tensor, target: t.Tensor, mask: t.Tensor | None = None) -> t.Tensor:
+        pred = pred.float()
+        target = target.float()
+
+        if mask is not None:
+            mask = mask.float()
+            if mask.shape != pred.shape:
+                raise ValueError(f"CCCLoss expects mask same shape as pred/target, got {mask.shape} vs {pred.shape}")
+            keep = mask.reshape(-1) > 0
+            if not t.any(keep):
+                return t.zeros((), device=pred.device, dtype=pred.dtype)
+            pred = pred.reshape(-1)[keep]
+            target = target.reshape(-1)[keep]
+        else:
+            pred = pred.reshape(-1)
+            target = target.reshape(-1)
 
         mean_pred = t.mean(pred)
         mean_target = t.mean(target)
@@ -121,29 +136,53 @@ class ICLoss(nn.Module):
     Computes correlation along `dim` (e.g., cross-sectional dim) and returns `1 - mean(ic)`.
     """
 
+    supports_mask = True
+
     def __init__(self, dim: int = -1, eps: float = 1e-8):
         super().__init__()
         self.dim = dim
         self.eps = eps
 
-    def forward(self, pred: t.Tensor, target: t.Tensor) -> t.Tensor:
+    def forward(self, pred: t.Tensor, target: t.Tensor, mask: t.Tensor | None = None) -> t.Tensor:
         pred = pred.float()
         target = target.float()
         if pred.shape != target.shape:
             raise ValueError(f"ICLoss expects pred/target same shape, got {pred.shape} vs {target.shape}")
 
-        mean_pred = pred.mean(dim=self.dim, keepdim=True)
-        mean_target = target.mean(dim=self.dim, keepdim=True)
+        if mask is None:
+            mean_pred = pred.mean(dim=self.dim, keepdim=True)
+            mean_target = target.mean(dim=self.dim, keepdim=True)
+            pred_centered = pred - mean_pred
+            target_centered = target - mean_target
+
+            cov = (pred_centered * target_centered).mean(dim=self.dim)
+            var_pred = (pred_centered ** 2).mean(dim=self.dim)
+            var_target = (target_centered ** 2).mean(dim=self.dim)
+            denom = (var_pred.sqrt() * var_target.sqrt()) + self.eps
+            corr = cov / denom
+            corr = t.where((var_pred < self.eps) | (var_target < self.eps), t.zeros_like(corr), corr)
+            ic = corr.mean()
+            return 1.0 - ic
+
+        mask = mask.float()
+        if mask.shape != pred.shape:
+            raise ValueError(f"ICLoss expects mask same shape as pred/target, got {mask.shape} vs {pred.shape}")
+
+        w = mask
+        w_sum = w.sum(dim=self.dim, keepdim=True)
+        w_norm = w / (w_sum + self.eps)
+
+        mean_pred = (w_norm * pred).sum(dim=self.dim, keepdim=True)
+        mean_target = (w_norm * target).sum(dim=self.dim, keepdim=True)
         pred_centered = pred - mean_pred
         target_centered = target - mean_target
 
-        cov = (pred_centered * target_centered).mean(dim=self.dim)
-        var_pred = (pred_centered ** 2).mean(dim=self.dim)
-        var_target = (target_centered ** 2).mean(dim=self.dim)
+        cov = (w_norm * pred_centered * target_centered).sum(dim=self.dim)
+        var_pred = (w_norm * (pred_centered ** 2)).sum(dim=self.dim)
+        var_target = (w_norm * (target_centered ** 2)).sum(dim=self.dim)
         denom = (var_pred.sqrt() * var_target.sqrt()) + self.eps
         corr = cov / denom
-        corr = t.where((var_pred < self.eps) | (var_target < self.eps), t.zeros_like(corr), corr)
-
+        corr = t.where((w_sum.squeeze(self.dim) < self.eps) | (var_pred < self.eps) | (var_target < self.eps), t.zeros_like(corr), corr)
         ic = corr.mean()
         return 1.0 - ic
 
@@ -155,19 +194,26 @@ class WeightedICLoss(nn.Module):
     Default uses softmax(beta * target) along `dim`.
     """
 
+    supports_mask = True
+
     def __init__(self, dim: int = -1, beta: float = 5.0, eps: float = 1e-8):
         super().__init__()
         self.dim = dim
         self.beta = float(beta)
         self.eps = eps
 
-    def forward(self, pred: t.Tensor, target: t.Tensor) -> t.Tensor:
+    def forward(self, pred: t.Tensor, target: t.Tensor, mask: t.Tensor | None = None) -> t.Tensor:
         pred = pred.float()
         target = target.float()
         if pred.shape != target.shape:
             raise ValueError(f"WeightedICLoss expects pred/target same shape, got {pred.shape} vs {target.shape}")
 
         weights = t.softmax(self.beta * target.detach(), dim=self.dim)
+        if mask is not None:
+            mask = mask.float()
+            if mask.shape != pred.shape:
+                raise ValueError(f"WeightedICLoss expects mask same shape as pred/target, got {mask.shape} vs {pred.shape}")
+            weights = weights * mask
         weights = weights / (weights.sum(dim=self.dim, keepdim=True) + self.eps)
 
         mean_pred = (weights * pred).sum(dim=self.dim, keepdim=True)
@@ -189,6 +235,8 @@ class WeightedICLoss(nn.Module):
 class HybridICCCLoss(nn.Module):
     """Hybrid loss: ic_weight * IC + (1-ic_weight) * CCC, both in loss form."""
 
+    supports_mask = True
+
     def __init__(
         self,
         ic_weight: float = 0.7,
@@ -200,7 +248,140 @@ class HybridICCCLoss(nn.Module):
         self.ic_loss = ic_loss if ic_loss is not None else ICLoss(dim=-1, eps=eps)
         self.ccc_loss = CCCLoss(eps=eps)
 
-    def forward(self, pred: t.Tensor, target: t.Tensor) -> t.Tensor:
-        ic = self.ic_loss(pred, target)
-        ccc = self.ccc_loss(pred, target)
+    def forward(self, pred: t.Tensor, target: t.Tensor, mask: t.Tensor | None = None) -> t.Tensor:
+        if mask is not None and getattr(self.ic_loss, 'supports_mask', False):
+            ic = self.ic_loss(pred, target, mask=mask)
+        else:
+            ic = self.ic_loss(pred, target)
+        if mask is not None and getattr(self.ccc_loss, 'supports_mask', False):
+            ccc = self.ccc_loss(pred, target, mask=mask)
+        else:
+            ccc = self.ccc_loss(pred, target)
         return self.ic_weight * ic + (1.0 - self.ic_weight) * ccc
+
+
+class RiskAverseListNetLoss(nn.Module):
+    """Risk-averse listwise ranking loss (ListNet + downside penalty).
+
+    Designed for stock_pack cross-sectional training:
+    - pred/target shape typically: [B, pred_len, n_codes]
+    - computes listwise cross-entropy between softmax(target) and softmax(pred)
+    - adds a downside penalty to discourage allocating score mass to below-mean targets
+    """
+
+    supports_mask = True
+
+    def __init__(
+        self,
+        dim: int = -1,
+        temperature: float = 10.0,
+        downside_weight: float = 0.1,
+        downside_gamma: float = 2.0,
+        horizon_idx: int | None = None,
+        eps: float = 1e-8,
+    ):
+        super().__init__()
+        self.dim = int(dim)
+        self.temperature = float(temperature)
+        self.downside_weight = float(downside_weight)
+        self.downside_gamma = float(downside_gamma)
+        self.horizon_idx = None if horizon_idx is None else int(horizon_idx)
+        self.eps = float(eps)
+
+    def forward(self, pred: t.Tensor, target: t.Tensor, mask: t.Tensor | None = None) -> t.Tensor:
+        pred = pred.float()
+        target = target.float()
+        if pred.shape != target.shape:
+            raise ValueError(f"RiskAverseListNetLoss expects pred/target same shape, got {pred.shape} vs {target.shape}")
+
+        # Optionally focus on one trade horizon (e.g., trade_horizon=2 -> horizon_idx=1).
+        if self.horizon_idx is not None and pred.ndim >= 3:
+            idx = self.horizon_idx
+            if 0 <= idx < pred.shape[1]:
+                pred = pred[:, idx, ...]
+                target = target[:, idx, ...]
+                if mask is not None:
+                    mask = mask[:, idx, ...]
+
+        dim = self.dim if self.dim >= 0 else pred.ndim + self.dim
+        if dim < 0 or dim >= pred.ndim:
+            raise ValueError(f"invalid dim={self.dim} for pred.ndim={pred.ndim}")
+
+        if mask is None:
+            pred_centered = pred - pred.mean(dim=dim, keepdim=True)
+            target_centered = target - target.mean(dim=dim, keepdim=True)
+            pred_std = pred_centered.std(dim=dim, keepdim=True, unbiased=False)
+            target_std = target_centered.std(dim=dim, keepdim=True, unbiased=False)
+
+            pred_norm = pred_centered / (pred_std + self.eps)
+            target_norm = target_centered / (target_std + self.eps)
+            pred_norm = t.where(pred_std < self.eps, t.zeros_like(pred_norm), pred_norm)
+            target_norm = t.where(target_std < self.eps, t.zeros_like(target_norm), target_norm)
+            valid_any = None
+        else:
+            mask = mask.float()
+            if mask.shape != pred.shape:
+                raise ValueError(f"RiskAverseListNetLoss expects mask same shape as pred/target, got {mask.shape} vs {pred.shape}")
+            w = mask
+            w_sum = w.sum(dim=dim, keepdim=True)
+            w_norm = w / (w_sum + self.eps)
+
+            pred_mean = (w_norm * pred).sum(dim=dim, keepdim=True)
+            target_mean = (w_norm * target).sum(dim=dim, keepdim=True)
+            pred_centered = pred - pred_mean
+            target_centered = target - target_mean
+
+            pred_var = (w_norm * (pred_centered ** 2)).sum(dim=dim, keepdim=True)
+            target_var = (w_norm * (target_centered ** 2)).sum(dim=dim, keepdim=True)
+            pred_std = t.sqrt(pred_var + self.eps)
+            target_std = t.sqrt(target_var + self.eps)
+
+            pred_norm = pred_centered / pred_std
+            target_norm = target_centered / target_std
+            pred_norm = t.where(w_sum < self.eps, t.zeros_like(pred_norm), pred_norm)
+            target_norm = t.where(w_sum < self.eps, t.zeros_like(target_norm), target_norm)
+            valid_any = (w_sum.squeeze(dim) > self.eps)
+
+        logits_pred = self.temperature * pred_norm
+        logits_true = self.temperature * target_norm.detach()
+
+        if mask is None:
+            log_p_pred = t.log_softmax(logits_pred, dim=dim)
+            p_true = t.softmax(logits_true, dim=dim)
+            ce = -(p_true * log_p_pred).sum(dim=dim).mean()
+            p_pred = t.softmax(logits_pred, dim=dim)
+        else:
+            # masked softmax: set invalid logits to a large negative and renormalize
+            neg = t.finfo(logits_pred.dtype).min / 4
+            logits_pred_m = t.where(mask > 0, logits_pred, neg)
+            logits_true_m = t.where(mask > 0, logits_true, neg)
+
+            log_p_pred = t.log_softmax(logits_pred_m, dim=dim)
+            p_pred = t.softmax(logits_pred_m, dim=dim)
+            p_true = t.softmax(logits_true_m, dim=dim)
+
+            ce_vec = -(p_true * log_p_pred).sum(dim=dim)
+            if valid_any is None:
+                ce = ce_vec.mean()
+            else:
+                ce = t.where(valid_any, ce_vec, t.zeros_like(ce_vec))
+                denom = valid_any.float().mean().clamp_min(self.eps)
+                ce = ce.mean() / denom
+
+        if self.downside_weight <= 0:
+            return ce
+
+        # Downside penalty: discourage giving high weight to below-mean targets.
+        downside = t.relu(-target_norm.detach())
+        if self.downside_gamma != 1.0:
+            downside = downside ** self.downside_gamma
+        if mask is not None:
+            downside = downside * mask
+        downside_pen_vec = (p_pred * downside).sum(dim=dim)
+        if valid_any is None:
+            downside_pen = downside_pen_vec.mean()
+        else:
+            downside_pen = t.where(valid_any, downside_pen_vec, t.zeros_like(downside_pen_vec))
+            denom = valid_any.float().mean().clamp_min(self.eps)
+            downside_pen = downside_pen.mean() / denom
+        return ce + self.downside_weight * downside_pen

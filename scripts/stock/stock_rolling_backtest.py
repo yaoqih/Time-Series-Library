@@ -667,7 +667,11 @@ def predict_dataset(exp, data_set, data_loader, args):
             open_scale = float(data_set.scaler.scale_[open_pos])
             open_mean = float(data_set.scaler.mean_[open_pos])
     with torch.no_grad():
-        for batch_x, batch_y, batch_x_mark, batch_y_mark in data_loader:
+        for batch in data_loader:
+            if isinstance(batch, (list, tuple)) and len(batch) == 5:
+                batch_x, batch_y, batch_x_mark, batch_y_mark, _ = batch
+            else:
+                batch_x, batch_y, batch_x_mark, batch_y_mark = batch
             batch_x = batch_x.float().to(exp.device)
             batch_y = batch_y.float().to(exp.device)
             batch_x_mark = batch_x_mark.float().to(exp.device)
@@ -819,7 +823,7 @@ def parse_args():
     parser.add_argument('--model_id', type=str, default='stock', help='model id')
     parser.add_argument('--des', type=str, default='stock_rolling', help='exp description')
 
-    parser.add_argument('--start_date', type=str, default='2010-01-01', help='rolling backtest start date')
+    parser.add_argument('--start_date', type=str, default='2017-01-01', help='rolling backtest start date')
     parser.add_argument('--end_date', type=str, default='2025-12-31', help='rolling backtest end date')
     parser.add_argument('--train_years', type=int, default=5, help='training window length in years')
     parser.add_argument('--test_months', type=int, default=3, help='test window length in months')
@@ -829,6 +833,8 @@ def parse_args():
                         choices=['train_val_test', 'train_test_val'],
                         help='rolling window order (train_val_test avoids lookahead for early stopping; train_test_val is legacy)')
     parser.add_argument('--max_windows', type=int, default=0, help='limit number of windows (0 = no limit)')
+    parser.add_argument('--reverse_windows', action='store_true', default=False,
+                        help='run rolling windows in reverse order (keeps winXXX ids unchanged)')
 
     parser.add_argument('--seq_len', type=int, default=64, help='input sequence length')
     parser.add_argument('--label_len', type=int, default=1, help='start token length')
@@ -847,6 +853,12 @@ def parse_args():
                         help='beta for Weighted IC loss softmax weighting')
     parser.add_argument('--hybrid_ic_weight', type=float, default=0.7,
                         help='IC weight for Hybrid loss (ic_weight * IC + (1-ic_weight) * CCC)')
+    parser.add_argument('--ra_temperature', type=float, default=10.0,
+                        help='temperature for RA_LISTNET / LISTNET softmax (larger -> focus more on top ranks)')
+    parser.add_argument('--ra_downside_weight', type=float, default=0.1,
+                        help='downside penalty weight for RA_LISTNET (larger -> more risk-averse)')
+    parser.add_argument('--ra_downside_gamma', type=float, default=2.0,
+                        help='downside penalty exponent for RA_LISTNET (larger -> focus more on tail downside)')
     parser.add_argument('--patience', type=int, default=3, help='early stopping patience')
     parser.add_argument('--num_workers', type=int, default=8, help='data loader workers')
     parser.add_argument('--persistent_workers', action='store_true', default=True,
@@ -912,6 +924,12 @@ def parse_args():
                         help='extra trading days after max(test_end, val_end) for packed calendar end (in addition to pred_len-1)')
     parser.add_argument('--stock_pack_fill_value', type=float, default=0.0,
                         help='fill value for missing/invalid targets when --stock_pack')
+    parser.add_argument('--stock_use_cs_mixer', type=_str2bool, nargs='?', const=True, default=True,
+                        help='(AStockMixer) enable cross-sectional induced attention mixer')
+    parser.add_argument('--stock_cs_layers', type=int, default=1,
+                        help='(AStockMixer) number of cross-sectional mixer layers')
+    parser.add_argument('--stock_cs_induce', type=int, default=16,
+                        help='(AStockMixer) number of inducing points (smaller -> faster, larger -> richer)')
     parser.add_argument('--stock_strict_pred_end', type=_str2bool, nargs='?', const=True, default=True,
                         help='require pred_date to also fall within the split range (prevents label leakage across train/val/test)')
     parser.add_argument('--stock_cache_dir', type=str, default='./cache', help='cache dir for stock preprocessing')
@@ -1008,6 +1026,9 @@ def _run_window(base_args, model_name, window, use_window_seed=False):
         args_run.enc_in = probe_dataset.c_in
         args_run.dec_in = probe_dataset.c_in
         args_run.c_out = probe_dataset.c_in
+        # Provide packed shape metadata for stock-aware models (e.g., AStockMixer).
+        args_run.stock_n_codes = int(getattr(probe_dataset, 'n_codes', 0) or 0)
+        args_run.stock_n_groups = int(getattr(probe_dataset, 'n_groups', 0) or 0)
 
     window_tag = _window_tag(train_start, train_end, test_start, test_end, val_start, val_end, idx)
     strict_pred_end = bool(getattr(args_run, 'stock_strict_pred_end', True))
@@ -1274,6 +1295,8 @@ def main():
         args.step_months,
         window_order=args.window_order
     )
+    if args.reverse_windows:
+        windows = list(reversed(windows))
     if args.max_windows and args.max_windows > 0:
         windows = windows[:args.max_windows]
 
@@ -1320,7 +1343,8 @@ def main():
                 failures.append((f"worker_gpu{gpu_id}", f"exitcode {proc.exitcode}"))
     else:
         for window in windows:
-            row, failure = _run_window(args, model_name, window)
+            # Seed per window so results are independent of execution order.
+            row, failure = _run_window(args, model_name, window, use_window_seed=True)
             if row is not None:
                 summary_rows.append(row)
             if failure is not None:
@@ -1347,6 +1371,10 @@ def main():
             summary_out.append(flat)
 
         summary_df = pd.DataFrame(summary_out)
+        try:
+            summary_df = summary_df.sort_values('window_tag')
+        except Exception:
+            pass
         summary_dir = os.path.join(args.results_root, model_name)
         os.makedirs(summary_dir, exist_ok=True)
         summary_csv = os.path.join(summary_dir, 'window_summary.csv')

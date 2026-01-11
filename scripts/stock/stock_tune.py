@@ -61,7 +61,11 @@ def predict_dataset(exp, data_set, data_loader, args):
     records = []
     offset = 0
     with torch.no_grad():
-        for batch_x, batch_y, batch_x_mark, batch_y_mark in data_loader:
+        for batch in data_loader:
+            if isinstance(batch, (list, tuple)) and len(batch) == 5:
+                batch_x, batch_y, batch_x_mark, batch_y_mark, _ = batch
+            else:
+                batch_x, batch_y, batch_x_mark, batch_y_mark = batch
             batch_x = batch_x.float().to(exp.device)
             batch_y = batch_y.float().to(exp.device)
             batch_x_mark = batch_x_mark.float().to(exp.device)

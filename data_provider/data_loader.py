@@ -31,7 +31,7 @@ warnings.filterwarnings('ignore')
 HUGGINGFACE_REPO = "thuml/Time-Series-Library"
 STOCK_CACHE_VERSION = "chaining_v2_clip30"
 STOCK_BASE_CACHE_VERSION = "base_v2_clip30"
-STOCK_PACKED_CACHE_VERSION = "packed_v2_union_multifeat"
+STOCK_PACKED_CACHE_VERSION = "packed_v3_union_mask_vol_preclose"
 STOCK_RETURN_LIMIT = 0.30
 _STOCK_BASE_MEM_CACHE = {}
 _STOCK_PACK_SELECT_END_WARNED = False
@@ -1833,6 +1833,7 @@ class Dataset_StockPacked(Dataset):
                 self.data = payload['data']
                 self.open = payload.get('open')
                 self.suspend = payload.get('suspend')
+                self.target_valid = payload.get('target_valid')
                 self.stamp = payload['stamp']
                 self.sample_index = payload['sample_index']
                 self.sample_meta = payload['sample_meta']
@@ -1852,9 +1853,12 @@ class Dataset_StockPacked(Dataset):
         if 'open' not in base_columns:
             raise ValueError("stock base cache missing 'open' column")
 
+        # base_cols = [
+        #     'open', 'high', 'low', 'close', 'volume', 'amount',
+        #     'settle', 'openInterest', 'preClose', 'suspendFlag'
+        # ]
         base_cols = [
-            'open', 'high', 'low', 'close', 'volume', 'amount',
-            'settle', 'openInterest', 'preClose', 'suspendFlag'
+            'open', 'high', 'low', 'close', 'volume', 'amount', 'preClose'
         ]
         base_feature_cols = [col for col in base_cols if col in base_columns]
 
@@ -1990,6 +1994,7 @@ class Dataset_StockPacked(Dataset):
         data_mat = np.full((t_len, n_groups * n_codes), fill_value, dtype=np.float32)
         open_mat = np.zeros((t_len, n_codes), dtype=np.float32)
         suspend_mat = np.ones((t_len, n_codes), dtype=np.int16)
+        target_valid_mat = np.zeros((t_len, n_codes), dtype=np.uint8)
 
         mean = getattr(self.scaler, 'mean_', None) if self._scaler_fitted else None
         scale = getattr(self.scaler, 'scale_', None) if self._scaler_fitted else None
@@ -2016,6 +2021,12 @@ class Dataset_StockPacked(Dataset):
                 raise ValueError("date alignment failed (mismatched dates)")
 
             feat = data[:, col_idx].astype(np.float32, copy=False)
+            # target validity mask (before filling NaNs): valid label & not suspended
+            if feat.shape[1] != n_groups:
+                raise ValueError("packed feature alignment failed (unexpected group count)")
+            target_raw = feat[:, -1]
+            valid_target = np.isfinite(target_raw) & (suspend.astype(int, copy=False) == 0)
+            target_valid_mat[idx, j] = valid_target.astype(np.uint8, copy=False)
             if self.scale and mean is not None and scale is not None:
                 for f in range(n_groups):
                     x = feat[:, f]
@@ -2045,6 +2056,7 @@ class Dataset_StockPacked(Dataset):
         self.data = data_mat
         self.open = open_mat
         self.suspend = suspend_mat
+        self.target_valid = target_valid_mat
         self.stamp = stamp
 
         split_years = self._select_split_years()
@@ -2115,6 +2127,7 @@ class Dataset_StockPacked(Dataset):
                 'data': self.data,
                 'open': self.open,
                 'suspend': self.suspend,
+                'target_valid': self.target_valid,
                 'stamp': self.stamp,
                 'sample_index': self.sample_index,
                 'sample_meta': self.sample_meta,
@@ -2134,7 +2147,14 @@ class Dataset_StockPacked(Dataset):
         seq_y = self.data[r_begin:r_end]
         seq_x_mark = self.stamp[s_begin:s_end]
         seq_y_mark = self.stamp[r_begin:r_end]
-        return seq_x, seq_y, seq_x_mark, seq_y_mark
+        target_valid = getattr(self, 'target_valid', None)
+        if target_valid is None:
+            return seq_x, seq_y, seq_x_mark, seq_y_mark
+        mask_y_t = target_valid[r_begin:r_end].astype(np.float32, copy=False)  # [L, N]
+        mask_y = np.zeros((mask_y_t.shape[0], self.c_in), dtype=np.float32)
+        start, end = self.target_slice if self.target_slice else (0, self.n_codes)
+        mask_y[:, int(start):int(end)] = mask_y_t
+        return seq_x, seq_y, seq_x_mark, seq_y_mark, mask_y
 
     def __len__(self):
         return len(self.sample_index)

@@ -12,7 +12,7 @@ import numpy as np
 from utils.dtw_metric import dtw, accelerated_dtw
 from utils.augmentation import run_augmentation, run_augmentation_single
 from utils.wandb_utils import log_wandb
-from utils.losses import CCCLoss, ICLoss, WeightedICLoss, HybridICCCLoss
+from utils.losses import CCCLoss, ICLoss, WeightedICLoss, HybridICCCLoss, RiskAverseListNetLoss
 
 warnings.filterwarnings('ignore')
 
@@ -20,6 +20,16 @@ warnings.filterwarnings('ignore')
 class Exp_Long_Term_Forecast(Exp_Basic):
     def __init__(self, args):
         super(Exp_Long_Term_Forecast, self).__init__(args)
+
+    @staticmethod
+    def _unpack_batch(batch):
+        if isinstance(batch, (list, tuple)) and len(batch) == 4:
+            batch_x, batch_y, batch_x_mark, batch_y_mark = batch
+            return batch_x, batch_y, batch_x_mark, batch_y_mark, None
+        if isinstance(batch, (list, tuple)) and len(batch) == 5:
+            batch_x, batch_y, batch_x_mark, batch_y_mark, batch_y_mask = batch
+            return batch_x, batch_y, batch_x_mark, batch_y_mark, batch_y_mask
+        raise ValueError(f"unexpected batch format (len={len(batch) if isinstance(batch, (list, tuple)) else 'n/a'})")
 
     def _slice_for_stock_pack(self, outputs, batch_y, data_set):
         if getattr(self.args, 'data', '') != 'stock' or not getattr(self.args, 'stock_pack', False):
@@ -82,6 +92,20 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             ic_weight = max(0.0, min(1.0, ic_weight))
             beta = float(getattr(self.args, 'ic_weight_beta', 5.0))
             return HybridICCCLoss(ic_weight=ic_weight, ic_loss=WeightedICLoss(dim=ic_dim, beta=beta))
+        if loss_name in {'LISTNET', 'RA_LISTNET', 'RISK_LISTNET', 'RALN'}:
+            dim = -1 if (getattr(self.args, 'data', '') == 'stock' and getattr(self.args, 'stock_pack', False)) else 0
+            temp = float(getattr(self.args, 'ra_temperature', 10.0))
+            down_w = float(getattr(self.args, 'ra_downside_weight', 0.1))
+            down_g = float(getattr(self.args, 'ra_downside_gamma', 2.0))
+            horizon = None
+            if getattr(self.args, 'data', '') == 'stock':
+                trade_horizon = getattr(self.args, 'trade_horizon', None)
+                if trade_horizon is not None:
+                    try:
+                        horizon = int(trade_horizon) - 1
+                    except Exception:
+                        horizon = None
+            return RiskAverseListNetLoss(dim=dim, temperature=temp, downside_weight=down_w, downside_gamma=down_g, horizon_idx=horizon)
         print(f"[warn] unknown loss '{loss_name}', fallback to MSE")
         return nn.MSELoss()
  
@@ -90,9 +114,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         total_loss = []
         self.model.eval()
         with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
+            for i, batch in enumerate(vali_loader):
+                batch_x, batch_y, batch_x_mark, batch_y_mark, batch_y_mask = self._unpack_batch(batch)
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float()
+                if batch_y_mask is not None:
+                    batch_y_mask = batch_y_mask.float()
 
                 batch_x_mark = batch_x_mark.float().to(self.device)
                 batch_y_mark = batch_y_mark.float().to(self.device)
@@ -111,14 +138,22 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     f_dim = -1 if self.args.features == 'MS' else 0
                     outputs = outputs[:, -self.args.pred_len:, f_dim:]
                     batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                    if batch_y_mask is not None:
+                        batch_y_mask = batch_y_mask[:, -self.args.pred_len:, f_dim:].to(self.device)
                 else:
                     outputs, batch_y = sliced
                     batch_y = batch_y.to(self.device)
+                    if batch_y_mask is not None:
+                        mask_sliced = self._slice_for_stock_pack(batch_y_mask, batch_y_mask, vali_data)
+                        batch_y_mask = (mask_sliced[0] if mask_sliced is not None else batch_y_mask).to(self.device)
 
                 pred = outputs.detach()
                 true = batch_y.detach()
 
-                loss = criterion(pred, true)
+                if batch_y_mask is not None and getattr(criterion, 'supports_mask', False):
+                    loss = criterion(pred, true, mask=batch_y_mask.detach())
+                else:
+                    loss = criterion(pred, true)
 
                 total_loss.append(loss.item())
         total_loss = np.average(total_loss)
@@ -151,11 +186,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
             self.model.train()
             epoch_time = time.time()
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
+            for i, batch in enumerate(train_loader):
                 iter_count += 1
                 model_optim.zero_grad()
+                batch_x, batch_y, batch_x_mark, batch_y_mark, batch_y_mask = self._unpack_batch(batch)
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
+                if batch_y_mask is not None:
+                    batch_y_mask = batch_y_mask.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
                 batch_y_mark = batch_y_mark.float().to(self.device)
 
@@ -173,10 +211,18 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                             f_dim = -1 if self.args.features == 'MS' else 0
                             outputs = outputs[:, -self.args.pred_len:, f_dim:]
                             batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                            if batch_y_mask is not None:
+                                batch_y_mask = batch_y_mask[:, -self.args.pred_len:, f_dim:]
                         else:
                             outputs, batch_y = sliced
                             batch_y = batch_y.to(self.device)
-                        loss = criterion(outputs, batch_y)
+                            if batch_y_mask is not None:
+                                mask_sliced = self._slice_for_stock_pack(batch_y_mask, batch_y_mask, train_data)
+                                batch_y_mask = mask_sliced[0] if mask_sliced is not None else batch_y_mask
+                        if batch_y_mask is not None and getattr(criterion, 'supports_mask', False):
+                            loss = criterion(outputs, batch_y, mask=batch_y_mask)
+                        else:
+                            loss = criterion(outputs, batch_y)
                         train_loss.append(loss.item())
                 else:
                     outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
@@ -186,10 +232,18 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         f_dim = -1 if self.args.features == 'MS' else 0
                         outputs = outputs[:, -self.args.pred_len:, f_dim:]
                         batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                        if batch_y_mask is not None:
+                            batch_y_mask = batch_y_mask[:, -self.args.pred_len:, f_dim:]
                     else:
                         outputs, batch_y = sliced
                         batch_y = batch_y.to(self.device)
-                    loss = criterion(outputs, batch_y)
+                        if batch_y_mask is not None:
+                            mask_sliced = self._slice_for_stock_pack(batch_y_mask, batch_y_mask, train_data)
+                            batch_y_mask = mask_sliced[0] if mask_sliced is not None else batch_y_mask
+                    if batch_y_mask is not None and getattr(criterion, 'supports_mask', False):
+                        loss = criterion(outputs, batch_y, mask=batch_y_mask)
+                    else:
+                        loss = criterion(outputs, batch_y)
                     train_loss.append(loss.item())
 
                 if (i + 1) % 100 == 0:
@@ -248,7 +302,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         self.model.eval()
         with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(test_loader):
+            for i, batch in enumerate(test_loader):
+                batch_x, batch_y, batch_x_mark, batch_y_mark, _ = self._unpack_batch(batch)
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
 

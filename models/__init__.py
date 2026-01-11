@@ -5,6 +5,7 @@ from . import Pyraformer, PatchTST, MICN, Crossformer, FiLM, iTransformer
 from . import Koopa, TiDE, FreTS, TimeMixer, TSMixer, SegRNN
 from . import TemporalFusionTransformer, SCINet, PAttn, TimeXer
 from . import WPMixer, MultiPatchFormer, KANAD, MSGNet, TimeFilter
+from . import AStockMixer
 
 # Optional models - gracefully skip if dependencies are missing
 # MambaSimple does not depend on mamba_ssm, so import it independently.
@@ -60,5 +61,6 @@ __all__ = [
     'Koopa', 'TiDE', 'FreTS', 'TimeMixer', 'TSMixer', 'SegRNN',
     'MambaSimple', 'TemporalFusionTransformer', 'SCINet', 'PAttn', 'TimeXer',
     'WPMixer', 'MultiPatchFormer', 'KANAD', 'MSGNet', 'TimeFilter',
+    'AStockMixer',
     'Sundial', 'TimeMoE', 'Chronos', 'Moirai', 'TiRex', 'TimesFM', 'Chronos2'
 ]
