@@ -12,7 +12,7 @@ import numpy as np
 from utils.dtw_metric import dtw, accelerated_dtw
 from utils.augmentation import run_augmentation, run_augmentation_single
 from utils.wandb_utils import log_wandb
-from utils.losses import CCCLoss, ICLoss, WeightedICLoss, HybridICCCLoss, RiskAverseListNetLoss
+from utils.losses import CCCLoss, ICLoss, WeightedICLoss, HybridICCCLoss, RiskAverseListNetLoss, Top1UtilityLoss
 
 warnings.filterwarnings('ignore')
 
@@ -111,6 +111,30 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     except Exception:
                         horizon = None
             return RiskAverseListNetLoss(dim=dim, temperature=temp, downside_weight=down_w, downside_gamma=down_g, horizon_idx=horizon)
+        if loss_name in {'TOP1', 'TOP1_UTILITY', 'UTILITY', 'PNL'}:
+            dim = -1 if (getattr(self.args, 'data', '') == 'stock' and getattr(self.args, 'stock_pack', False)) else 0
+            temp = float(getattr(self.args, 'utility_temperature', getattr(self.args, 'ra_temperature', 10.0)))
+            down_w = float(getattr(self.args, 'utility_downside_weight', getattr(self.args, 'ra_downside_weight', 0.0)))
+            down_g = float(getattr(self.args, 'utility_downside_gamma', getattr(self.args, 'ra_downside_gamma', 2.0)))
+            var_w = float(getattr(self.args, 'utility_var_weight', 0.0))
+            normalize_pred = bool(getattr(self.args, 'utility_normalize_pred', True))
+            horizon = None
+            if getattr(self.args, 'data', '') == 'stock':
+                trade_horizon = getattr(self.args, 'trade_horizon', None)
+                if trade_horizon is not None:
+                    try:
+                        horizon = int(trade_horizon) - 1
+                    except Exception:
+                        horizon = None
+            return Top1UtilityLoss(
+                dim=dim,
+                temperature=temp,
+                downside_weight=down_w,
+                downside_gamma=down_g,
+                var_weight=var_w,
+                horizon_idx=horizon,
+                normalize_pred=normalize_pred,
+            )
         print(f"[warn] unknown loss '{loss_name}', fallback to MSE")
         return nn.MSELoss()
  

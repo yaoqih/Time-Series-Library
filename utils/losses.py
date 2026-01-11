@@ -385,3 +385,111 @@ class RiskAverseListNetLoss(nn.Module):
             denom = valid_any.float().mean().clamp_min(self.eps)
             downside_pen = downside_pen.mean() / denom
         return ce + self.downside_weight * downside_pen
+
+
+class Top1UtilityLoss(nn.Module):
+    """Approximate top-1 selection utility loss (softmax-weighted return).
+
+    Converts model outputs to cross-sectional weights via softmax(temperature * pred_norm),
+    then maximizes expected return under those weights. Optional downside/variance penalties
+    help reduce drawdowns and tail risk while keeping "top1" alignment.
+    """
+
+    supports_mask = True
+
+    def __init__(
+        self,
+        dim: int = -1,
+        temperature: float = 10.0,
+        downside_weight: float = 0.0,
+        downside_gamma: float = 2.0,
+        var_weight: float = 0.0,
+        horizon_idx: int | None = None,
+        normalize_pred: bool = True,
+        eps: float = 1e-8,
+    ):
+        super().__init__()
+        self.dim = int(dim)
+        self.temperature = float(temperature)
+        self.downside_weight = float(downside_weight)
+        self.downside_gamma = float(downside_gamma)
+        self.var_weight = float(var_weight)
+        self.horizon_idx = None if horizon_idx is None else int(horizon_idx)
+        self.normalize_pred = bool(normalize_pred)
+        self.eps = float(eps)
+
+    def forward(self, pred: t.Tensor, target: t.Tensor, mask: t.Tensor | None = None) -> t.Tensor:
+        pred = pred.float()
+        target = target.float()
+        if pred.shape != target.shape:
+            raise ValueError(f"Top1UtilityLoss expects pred/target same shape, got {pred.shape} vs {target.shape}")
+
+        # Optionally focus on one trade horizon (e.g., trade_horizon=2 -> horizon_idx=1).
+        if self.horizon_idx is not None and pred.ndim >= 3:
+            idx = self.horizon_idx
+            if 0 <= idx < pred.shape[1]:
+                pred = pred[:, idx, ...]
+                target = target[:, idx, ...]
+                if mask is not None:
+                    mask = mask[:, idx, ...]
+
+        dim = self.dim if self.dim >= 0 else pred.ndim + self.dim
+        if dim < 0 or dim >= pred.ndim:
+            raise ValueError(f"invalid dim={self.dim} for pred.ndim={pred.ndim}")
+
+        valid_any = None
+        if mask is None:
+            if self.normalize_pred:
+                pred_centered = pred - pred.mean(dim=dim, keepdim=True)
+                pred_std = pred_centered.std(dim=dim, keepdim=True, unbiased=False)
+                pred_norm = pred_centered / (pred_std + self.eps)
+                pred_norm = t.where(pred_std < self.eps, t.zeros_like(pred_norm), pred_norm)
+            else:
+                pred_norm = pred
+            logits = self.temperature * pred_norm
+            w = t.softmax(logits, dim=dim)
+        else:
+            mask = mask.float()
+            if mask.shape != pred.shape:
+                raise ValueError(f"Top1UtilityLoss expects mask same shape as pred/target, got {mask.shape} vs {pred.shape}")
+            w_sum = mask.sum(dim=dim, keepdim=True)
+            valid_any = (w_sum.squeeze(dim) > self.eps)
+            w_norm = mask / (w_sum + self.eps)
+
+            if self.normalize_pred:
+                pred_mean = (w_norm * pred).sum(dim=dim, keepdim=True)
+                pred_centered = pred - pred_mean
+                pred_var = (w_norm * (pred_centered ** 2)).sum(dim=dim, keepdim=True)
+                pred_std = t.sqrt(pred_var + self.eps)
+                pred_norm = pred_centered / pred_std
+                pred_norm = t.where(w_sum < self.eps, t.zeros_like(pred_norm), pred_norm)
+            else:
+                pred_norm = t.where(w_sum < self.eps, t.zeros_like(pred), pred)
+
+            logits = self.temperature * pred_norm
+            neg = t.finfo(logits.dtype).min / 4
+            logits_m = t.where(mask > 0, logits, neg)
+            w = t.softmax(logits_m, dim=dim)
+
+        exp_ret = (w * target).sum(dim=dim)
+        utility = exp_ret
+
+        if self.downside_weight > 0:
+            downside = t.relu(-target)
+            if self.downside_gamma != 1.0:
+                downside = downside ** self.downside_gamma
+            downside_pen = (w * downside).sum(dim=dim)
+            utility = utility - self.downside_weight * downside_pen
+
+        if self.var_weight > 0:
+            diff = target - exp_ret.unsqueeze(dim)
+            var_pen = (w * (diff ** 2)).sum(dim=dim)
+            utility = utility - self.var_weight * var_pen
+
+        loss_vec = -utility
+        if valid_any is None:
+            return loss_vec.mean()
+
+        loss_vec = t.where(valid_any, loss_vec, t.zeros_like(loss_vec))
+        denom = valid_any.float().mean().clamp_min(self.eps)
+        return loss_vec.mean() / denom

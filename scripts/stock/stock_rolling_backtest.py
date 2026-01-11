@@ -1388,7 +1388,7 @@ def parse_args():
     parser.add_argument('--trade_horizon', type=int, default=2,
                         help='which forecast horizon step to trade on (2 = next-next open return); must be <= pred_len')
     parser.add_argument('--features', type=str, default='MS', help='forecasting task options:[M, S, MS]')
-    parser.add_argument('--target', type=str, default='lag_return_cs_rank', help='target feature')
+    parser.add_argument('--target', type=str, default='lag_return', help='target feature')
     parser.add_argument('--freq', type=str, default='b', help='freq for time features encoding')
 
     parser.add_argument('--train_epochs', type=int, default=10, help='train epochs')
@@ -1396,7 +1396,7 @@ def parse_args():
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='learning rate')
     parser.add_argument('--weight_decay', type=float, default=0.0, help='weight decay for Adam')
     parser.add_argument('--grad_clip', type=float, default=0.0, help='clip grad norm (0 disables)')
-    parser.add_argument('--loss', type=str, default='RISK_LISTNET', help='loss function (e.g., MSE, CCC)')
+    parser.add_argument('--loss', type=str, default='TOP1_UTILITY', help='loss function (e.g., MSE, CCC)')
     parser.add_argument('--ic_weight_beta', type=float, default=5.0,
                         help='beta for Weighted IC loss softmax weighting')
     parser.add_argument('--hybrid_ic_weight', type=float, default=0.7,
@@ -1407,6 +1407,16 @@ def parse_args():
                         help='downside penalty weight for RA_LISTNET (larger -> more risk-averse)')
     parser.add_argument('--ra_downside_gamma', type=float, default=2.0,
                         help='downside penalty exponent for RA_LISTNET (larger -> focus more on tail downside)')
+    parser.add_argument('--utility_temperature', type=float, default=10.0,
+                        help='(TOP1_UTILITY) softmax temperature (larger -> closer to top1)')
+    parser.add_argument('--utility_downside_weight', type=float, default=1.0,
+                        help='(TOP1_UTILITY) downside penalty weight on negative returns')
+    parser.add_argument('--utility_downside_gamma', type=float, default=2.0,
+                        help='(TOP1_UTILITY) downside penalty exponent')
+    parser.add_argument('--utility_var_weight', type=float, default=0.05,
+                        help='(TOP1_UTILITY) variance penalty weight (risk proxy)')
+    parser.add_argument('--utility_normalize_pred', type=_str2bool, nargs='?', const=True, default=True,
+                        help='(TOP1_UTILITY) normalize pred cross-section before softmax')
     parser.add_argument('--patience', type=int, default=3, help='early stopping patience')
     parser.add_argument('--num_workers', type=int, default=8, help='data loader workers')
     parser.add_argument('--persistent_workers', action='store_true', default=True,
