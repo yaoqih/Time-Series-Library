@@ -493,3 +493,82 @@ class Top1UtilityLoss(nn.Module):
         loss_vec = t.where(valid_any, loss_vec, t.zeros_like(loss_vec))
         denom = valid_any.float().mean().clamp_min(self.eps)
         return loss_vec.mean() / denom
+
+
+class HybridRankUtilityLoss(nn.Module):
+    """Hybrid loss for stock selection: dense listwise ranking + top1 utility alignment.
+
+    Motivation:
+    - Pure top1-style objectives are sparse/noisy (especially with large universes).
+    - A listwise rank loss provides denser supervision to learn cross-sectional signal.
+    - Utility term aligns training with the final top1 PnL objective (with optional downside control).
+    """
+
+    supports_mask = True
+
+    def __init__(
+        self,
+        *,
+        rank_loss: nn.Module,
+        utility_loss: nn.Module,
+        rank_weight: float = 0.7,
+        utility_weight: float = 0.3,
+        utility_warmup_epochs: int = 0,
+        utility_ramp_epochs: int = 0,
+        normalize_weights: bool = True,
+        eps: float = 1e-8,
+    ):
+        super().__init__()
+        self.rank_loss = rank_loss
+        self.utility_loss = utility_loss
+        self.rank_weight = float(rank_weight)
+        self.utility_weight = float(utility_weight)
+        self.utility_warmup_epochs = int(utility_warmup_epochs)
+        self.utility_ramp_epochs = int(utility_ramp_epochs)
+        self.normalize_weights = bool(normalize_weights)
+        self.eps = float(eps)
+
+        self._epoch = 0
+        self._total_epochs = None
+
+    def set_epoch(self, epoch: int, total_epochs: int | None = None):
+        self._epoch = int(epoch)
+        self._total_epochs = None if total_epochs is None else int(total_epochs)
+
+    def _utility_scale(self) -> float:
+        warmup = max(0, int(self.utility_warmup_epochs))
+        ramp = max(0, int(self.utility_ramp_epochs))
+        if self._epoch < warmup:
+            return 0.0
+        if ramp <= 0:
+            return 1.0
+        # Start ramp immediately after warmup. At epoch==warmup => 1/ramp.
+        progress = (self._epoch - warmup + 1) / float(ramp)
+        if progress <= 0:
+            return 0.0
+        if progress >= 1:
+            return 1.0
+        return float(progress)
+
+    def forward(self, pred: t.Tensor, target: t.Tensor, mask: t.Tensor | None = None) -> t.Tensor:
+        if mask is not None and getattr(self.rank_loss, 'supports_mask', False):
+            rank_term = self.rank_loss(pred, target, mask=mask)
+        else:
+            rank_term = self.rank_loss(pred, target)
+
+        if mask is not None and getattr(self.utility_loss, 'supports_mask', False):
+            utility_term = self.utility_loss(pred, target, mask=mask)
+        else:
+            utility_term = self.utility_loss(pred, target)
+
+        util_scale = self._utility_scale()
+        rw = max(0.0, self.rank_weight)
+        uw = max(0.0, self.utility_weight) * util_scale
+
+        if not self.normalize_weights:
+            return rw * rank_term + uw * utility_term
+
+        denom = rw + uw
+        if denom <= self.eps:
+            return rank_term
+        return (rw / denom) * rank_term + (uw / denom) * utility_term

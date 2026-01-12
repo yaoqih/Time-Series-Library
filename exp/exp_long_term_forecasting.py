@@ -12,7 +12,15 @@ import numpy as np
 from utils.dtw_metric import dtw, accelerated_dtw
 from utils.augmentation import run_augmentation, run_augmentation_single
 from utils.wandb_utils import log_wandb
-from utils.losses import CCCLoss, ICLoss, WeightedICLoss, HybridICCCLoss, RiskAverseListNetLoss, Top1UtilityLoss
+from utils.losses import (
+    CCCLoss,
+    ICLoss,
+    WeightedICLoss,
+    HybridICCCLoss,
+    RiskAverseListNetLoss,
+    Top1UtilityLoss,
+    HybridRankUtilityLoss,
+)
 
 warnings.filterwarnings('ignore')
 
@@ -111,6 +119,59 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     except Exception:
                         horizon = None
             return RiskAverseListNetLoss(dim=dim, temperature=temp, downside_weight=down_w, downside_gamma=down_g, horizon_idx=horizon)
+        if loss_name in {'HYBRID_RANK_UTILITY', 'RANK_UTILITY', 'HRU', 'RANKUTILITY'}:
+            dim = -1 if (getattr(self.args, 'data', '') == 'stock' and getattr(self.args, 'stock_pack', False)) else 0
+
+            horizon = None
+            if getattr(self.args, 'data', '') == 'stock':
+                trade_horizon = getattr(self.args, 'trade_horizon', None)
+                if trade_horizon is not None:
+                    try:
+                        horizon = int(trade_horizon) - 1
+                    except Exception:
+                        horizon = None
+
+            rank_temp = float(getattr(self.args, 'rank_utility_rank_temperature', getattr(self.args, 'ra_temperature', 10.0)))
+            rank_down_w = float(getattr(self.args, 'rank_utility_rank_downside_weight', getattr(self.args, 'ra_downside_weight', 0.0)))
+            rank_down_g = float(getattr(self.args, 'rank_utility_rank_downside_gamma', getattr(self.args, 'ra_downside_gamma', 2.0)))
+
+            util_temp = float(getattr(self.args, 'rank_utility_utility_temperature', getattr(self.args, 'utility_temperature', rank_temp)))
+            util_down_w = float(getattr(self.args, 'rank_utility_utility_downside_weight', getattr(self.args, 'utility_downside_weight', 0.0)))
+            util_down_g = float(getattr(self.args, 'rank_utility_utility_downside_gamma', getattr(self.args, 'utility_downside_gamma', rank_down_g)))
+            util_var_w = float(getattr(self.args, 'rank_utility_utility_var_weight', getattr(self.args, 'utility_var_weight', 0.0)))
+            util_norm_pred = bool(getattr(self.args, 'rank_utility_utility_normalize_pred', getattr(self.args, 'utility_normalize_pred', True)))
+
+            rank_weight = float(getattr(self.args, 'rank_utility_rank_weight', 0.7))
+            util_weight = float(getattr(self.args, 'rank_utility_utility_weight', 0.3))
+            warmup_epochs = int(getattr(self.args, 'rank_utility_warmup_epochs', 0))
+            ramp_epochs = int(getattr(self.args, 'rank_utility_ramp_epochs', 0))
+            normalize_weights = bool(getattr(self.args, 'rank_utility_normalize_weights', True))
+
+            rank_loss = RiskAverseListNetLoss(
+                dim=dim,
+                temperature=rank_temp,
+                downside_weight=rank_down_w,
+                downside_gamma=rank_down_g,
+                horizon_idx=horizon,
+            )
+            utility_loss = Top1UtilityLoss(
+                dim=dim,
+                temperature=util_temp,
+                downside_weight=util_down_w,
+                downside_gamma=util_down_g,
+                var_weight=util_var_w,
+                horizon_idx=horizon,
+                normalize_pred=util_norm_pred,
+            )
+            return HybridRankUtilityLoss(
+                rank_loss=rank_loss,
+                utility_loss=utility_loss,
+                rank_weight=rank_weight,
+                utility_weight=util_weight,
+                utility_warmup_epochs=warmup_epochs,
+                utility_ramp_epochs=ramp_epochs,
+                normalize_weights=normalize_weights,
+            )
         if loss_name in {'TOP1', 'TOP1_UTILITY', 'UTILITY', 'PNL'}:
             dim = -1 if (getattr(self.args, 'data', '') == 'stock' and getattr(self.args, 'stock_pack', False)) else 0
             temp = float(getattr(self.args, 'utility_temperature', getattr(self.args, 'ra_temperature', 10.0)))
@@ -210,14 +271,24 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             scaler = torch.cuda.amp.GradScaler()
 
         for epoch in range(self.args.train_epochs):
+            if hasattr(criterion, 'set_epoch'):
+                try:
+                    criterion.set_epoch(epoch, total_epochs=int(self.args.train_epochs))
+                except TypeError:
+                    # Backwards-compatible: set_epoch(epoch)
+                    criterion.set_epoch(epoch)
+
+            accumulation_steps = int(getattr(self.args, 'accumulation_steps', 1) or 1)
+            accumulation_steps = max(1, accumulation_steps)
+
             iter_count = 0
             train_loss = []
 
             self.model.train()
             epoch_time = time.time()
+            model_optim.zero_grad()
             for i, batch in enumerate(train_loader):
                 iter_count += 1
-                model_optim.zero_grad()
                 batch_x, batch_y, batch_x_mark, batch_y_mark, batch_y_mask = self._unpack_batch(batch)
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
@@ -283,20 +354,26 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     iter_count = 0
                     time_now = time.time()
 
+                loss_scaled = loss / float(accumulation_steps)
                 if self.args.use_amp:
-                    scaler.scale(loss).backward()
-                    grad_clip = float(getattr(self.args, 'grad_clip', 0.0) or 0.0)
-                    if grad_clip > 0:
-                        scaler.unscale_(model_optim)
-                        nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_clip)
-                    scaler.step(model_optim)
-                    scaler.update()
+                    scaler.scale(loss_scaled).backward()
                 else:
-                    loss.backward()
+                    loss_scaled.backward()
+
+                do_step = ((i + 1) % accumulation_steps == 0) or ((i + 1) == len(train_loader))
+                if do_step:
                     grad_clip = float(getattr(self.args, 'grad_clip', 0.0) or 0.0)
-                    if grad_clip > 0:
-                        nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_clip)
-                    model_optim.step()
+                    if self.args.use_amp:
+                        if grad_clip > 0:
+                            scaler.unscale_(model_optim)
+                            nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_clip)
+                        scaler.step(model_optim)
+                        scaler.update()
+                    else:
+                        if grad_clip > 0:
+                            nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_clip)
+                        model_optim.step()
+                    model_optim.zero_grad()
 
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)

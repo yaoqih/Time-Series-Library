@@ -1365,7 +1365,7 @@ def parse_args():
 
     parser.add_argument('--root_path', type=str, default='.', help='root path of the data file')
     parser.add_argument('--data_path', type=str, default='stock_data.parquet', help='data file')
-    parser.add_argument('--model', type=str, default='WPMixer', help='model name')
+    parser.add_argument('--model', type=str, default='AStockMixer', help='model name')
     parser.add_argument('--model_id', type=str, default='stock', help='model id')
     parser.add_argument('--des', type=str, default='stock_rolling', help='exp description')
 
@@ -1391,33 +1391,44 @@ def parse_args():
     parser.add_argument('--target', type=str, default='lag_return', help='target feature')
     parser.add_argument('--freq', type=str, default='b', help='freq for time features encoding')
 
-    parser.add_argument('--train_epochs', type=int, default=10, help='train epochs')
+    parser.add_argument('--train_epochs', type=int, default=20, help='train epochs')
     parser.add_argument('--batch_size', type=int, default=2, help='batch size')
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='learning rate')
-    parser.add_argument('--weight_decay', type=float, default=0.0, help='weight decay for Adam')
-    parser.add_argument('--grad_clip', type=float, default=0.0, help='clip grad norm (0 disables)')
-    parser.add_argument('--loss', type=str, default='TOP1_UTILITY', help='loss function (e.g., MSE, CCC)')
+    parser.add_argument('--weight_decay', type=float, default=0.0001, help='weight decay for Adam')
+    parser.add_argument('--grad_clip', type=float, default=1.0, help='clip grad norm (0 disables)')
+    parser.add_argument('--accumulation_steps', type=int, default=4, help='gradient accumulation steps')
+    parser.add_argument('--loss', type=str, default='RANK_UTILITY', help='loss function (e.g., MSE, CCC)')
     parser.add_argument('--ic_weight_beta', type=float, default=5.0,
                         help='beta for Weighted IC loss softmax weighting')
     parser.add_argument('--hybrid_ic_weight', type=float, default=0.7,
                         help='IC weight for Hybrid loss (ic_weight * IC + (1-ic_weight) * CCC)')
-    parser.add_argument('--ra_temperature', type=float, default=10.0,
+    parser.add_argument('--ra_temperature', type=float, default=5.0,
                         help='temperature for RA_LISTNET / LISTNET softmax (larger -> focus more on top ranks)')
-    parser.add_argument('--ra_downside_weight', type=float, default=0.1,
+    parser.add_argument('--ra_downside_weight', type=float, default=0.0,
                         help='downside penalty weight for RA_LISTNET (larger -> more risk-averse)')
     parser.add_argument('--ra_downside_gamma', type=float, default=2.0,
                         help='downside penalty exponent for RA_LISTNET (larger -> focus more on tail downside)')
-    parser.add_argument('--utility_temperature', type=float, default=10.0,
+    parser.add_argument('--utility_temperature', type=float, default=4.0,
                         help='(TOP1_UTILITY) softmax temperature (larger -> closer to top1)')
-    parser.add_argument('--utility_downside_weight', type=float, default=1.0,
+    parser.add_argument('--utility_downside_weight', type=float, default=0.3,
                         help='(TOP1_UTILITY) downside penalty weight on negative returns')
     parser.add_argument('--utility_downside_gamma', type=float, default=2.0,
                         help='(TOP1_UTILITY) downside penalty exponent')
-    parser.add_argument('--utility_var_weight', type=float, default=0.05,
+    parser.add_argument('--utility_var_weight', type=float, default=0.0,
                         help='(TOP1_UTILITY) variance penalty weight (risk proxy)')
     parser.add_argument('--utility_normalize_pred', type=_str2bool, nargs='?', const=True, default=True,
                         help='(TOP1_UTILITY) normalize pred cross-section before softmax')
-    parser.add_argument('--patience', type=int, default=3, help='early stopping patience')
+    parser.add_argument('--rank_utility_rank_weight', type=float, default=0.7,
+                        help='(RANK_UTILITY) weight of rank (listwise) term')
+    parser.add_argument('--rank_utility_utility_weight', type=float, default=0.3,
+                        help='(RANK_UTILITY) weight of utility (PnL) term')
+    parser.add_argument('--rank_utility_warmup_epochs', type=int, default=3,
+                        help='(RANK_UTILITY) warmup epochs with utility term disabled')
+    parser.add_argument('--rank_utility_ramp_epochs', type=int, default=5,
+                        help='(RANK_UTILITY) utility weight ramp epochs after warmup')
+    parser.add_argument('--rank_utility_normalize_weights', type=_str2bool, nargs='?', const=True, default=True,
+                        help='(RANK_UTILITY) normalize rank/utility weights to sum to 1 each epoch')
+    parser.add_argument('--patience', type=int, default=5, help='early stopping patience')
     parser.add_argument('--num_workers', type=int, default=8, help='data loader workers')
     parser.add_argument('--persistent_workers', action='store_true', default=True,
                         help='keep data loader workers alive between epochs')
