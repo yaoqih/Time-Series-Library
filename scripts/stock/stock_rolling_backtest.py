@@ -1493,6 +1493,12 @@ def parse_args():
                         help='extra trading days after max(test_end, val_end) for packed calendar end (in addition to pred_len-1)')
     parser.add_argument('--stock_pack_fill_value', type=float, default=0.0,
                         help='fill value for missing/invalid targets when --stock_pack')
+    parser.add_argument('--stock_feature_set', type=str, default='alpha', choices=['raw', 'alpha'],
+                        help="feature engineering for stock_pack: 'raw' (OHLCV levels) or 'alpha' (stationary factors)")
+    parser.add_argument('--stock_cs_norm', type=str, default='zscore', choices=['none', 'zscore'],
+                        help="cross-sectional normalization per day for engineered features: 'none' or 'zscore'")
+    parser.add_argument('--stock_cs_clip', type=float, default=5.0,
+                        help="clip value after cross-sectional z-score (0 disables)")
     parser.add_argument('--stock_use_cs_mixer', type=_str2bool, nargs='?', const=True, default=True,
                         help='(AStockMixer) enable cross-sectional induced attention mixer')
     parser.add_argument('--stock_cs_layers', type=int, default=1,

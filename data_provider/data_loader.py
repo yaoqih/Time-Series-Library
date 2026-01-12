@@ -31,7 +31,7 @@ warnings.filterwarnings('ignore')
 HUGGINGFACE_REPO = "thuml/Time-Series-Library"
 STOCK_CACHE_VERSION = "chaining_v2_clip30"
 STOCK_BASE_CACHE_VERSION = "base_v2_clip30"
-STOCK_PACKED_CACHE_VERSION = "packed_v3_union_mask_vol_preclose"
+STOCK_PACKED_CACHE_VERSION = "packed_v4_alpha_cs_zscore"
 STOCK_RETURN_LIMIT = 0.30
 _STOCK_BASE_MEM_CACHE = {}
 _STOCK_PACK_SELECT_END_WARNED = False
@@ -1619,6 +1619,9 @@ class Dataset_StockPacked(Dataset):
         self.n_groups = 0
         self.target_slice = None
         self.packed = True
+        self.stock_feature_set = str(getattr(args, 'stock_feature_set', 'raw') or 'raw').strip().lower()
+        self.stock_cs_norm = str(getattr(args, 'stock_cs_norm', 'none') or 'none').strip().lower()
+        self.stock_cs_clip = float(getattr(args, 'stock_cs_clip', 5.0) or 0.0)
         self.__read_data__()
 
     def _build_datetime(self, df, time_col):
@@ -1652,6 +1655,9 @@ class Dataset_StockPacked(Dataset):
     def _packed_cache_key(self, data_path):
         pack_start, pack_end = self.pack_date_range
         pack_select_end = getattr(self.args, 'stock_pack_select_end', None) or 'train_end'
+        feature_set = str(getattr(self.args, 'stock_feature_set', 'raw') or 'raw').strip().lower()
+        cs_norm = str(getattr(self.args, 'stock_cs_norm', 'none') or 'none').strip().lower()
+        cs_clip = float(getattr(self.args, 'stock_cs_clip', 5.0) or 0.0)
         key_data = {
             'data_path': os.path.abspath(data_path),
             'mtime': os.path.getmtime(data_path),
@@ -1677,6 +1683,9 @@ class Dataset_StockPacked(Dataset):
             'universe_size': int(getattr(self.args, 'stock_universe_size', 0) or 0),
             'fill_value': float(getattr(self.args, 'stock_pack_fill_value', 0.0)),
             'strict_pred_end': bool(self.strict_pred_end),
+            'feature_set': feature_set,
+            'cs_norm': cs_norm,
+            'cs_clip': cs_clip,
         }
         raw = str(sorted(key_data.items())).encode('utf-8')
         return hashlib.md5(raw).hexdigest()
@@ -1853,6 +1862,20 @@ class Dataset_StockPacked(Dataset):
         if 'open' not in base_columns:
             raise ValueError("stock base cache missing 'open' column")
 
+        feature_set = str(getattr(self.args, 'stock_feature_set', self.stock_feature_set) or 'raw').strip().lower()
+        cs_norm = str(getattr(self.args, 'stock_cs_norm', self.stock_cs_norm) or 'none').strip().lower()
+        cs_clip = float(getattr(self.args, 'stock_cs_clip', self.stock_cs_clip) or 0.0)
+        if feature_set not in {'raw', 'alpha'}:
+            raise ValueError("stock_feature_set must be one of: raw, alpha")
+        if cs_norm not in {'none', 'zscore'}:
+            raise ValueError("stock_cs_norm must be one of: none, zscore")
+        self.stock_feature_set = feature_set
+        self.stock_cs_norm = cs_norm
+        self.stock_cs_clip = cs_clip
+        if feature_set != 'raw':
+            # Alpha features are already normalized/robust; skip global StandardScaler.
+            self.scale = False
+
         # base_cols = [
         #     'open', 'high', 'low', 'close', 'volume', 'amount',
         #     'settle', 'openInterest', 'preClose', 'suspendFlag'
@@ -1865,14 +1888,34 @@ class Dataset_StockPacked(Dataset):
         if self.features == 'S':
             pack_feature_cols = [self.target]
         else:
-            pack_feature_cols = [col for col in base_feature_cols if col != self.target]
-            if self.target not in pack_feature_cols:
-                pack_feature_cols.append(self.target)
+            if feature_set == 'alpha':
+                alpha_cols = [
+                    'gap_oc',        # open / preClose - 1
+                    'ret_intra',     # close / open - 1
+                    'ret_cc',        # close / preClose - 1
+                    'hl_range',      # (high - low) / preClose
+                    'upper_wick',    # (high - max(open,close)) / preClose
+                    'lower_wick',    # (min(open,close) - low) / preClose
+                    'log_volume',    # log1p(volume)
+                    'log_amount',    # log1p(amount)
+                ]
+                pack_feature_cols = alpha_cols + [self.target]
+            else:
+                pack_feature_cols = [col for col in base_feature_cols if col != self.target]
+                if self.target not in pack_feature_cols:
+                    pack_feature_cols.append(self.target)
 
         self.pack_feature_cols = pack_feature_cols
         self.feature_cols = pack_feature_cols
-        col_idx = [base_columns.index(c) for c in pack_feature_cols]
         open_col_idx = base_columns.index('open')
+        target_col_idx = base_columns.index(self.target)
+        col_idx = [base_columns.index(c) for c in pack_feature_cols] if (feature_set == 'raw' or self.features == 'S') else None
+        high_col_idx = base_columns.index('high') if 'high' in base_columns else None
+        low_col_idx = base_columns.index('low') if 'low' in base_columns else None
+        close_col_idx = base_columns.index('close') if 'close' in base_columns else None
+        preclose_col_idx = base_columns.index('preClose') if 'preClose' in base_columns else None
+        volume_col_idx = base_columns.index('volume') if 'volume' in base_columns else None
+        amount_col_idx = base_columns.index('amount') if 'amount' in base_columns else None
 
         pack_start, pack_end = self.pack_date_range
         if pack_start is None:
@@ -1940,7 +1983,7 @@ class Dataset_StockPacked(Dataset):
 
         self.scaler = StandardScaler()
         self._scaler_fitted = False
-        if self.scale:
+        if self.scale and col_idx is not None:
             for code in selected:
                 payload = base_data_by_code[code]
                 data_all = payload['data'][:, col_idx]
@@ -2020,20 +2063,79 @@ class Dataset_StockPacked(Dataset):
             if not np.array_equal(common_dates[idx], dates):
                 raise ValueError("date alignment failed (mismatched dates)")
 
-            feat = data[:, col_idx].astype(np.float32, copy=False)
-            # target validity mask (before filling NaNs): valid label & not suspended
-            if feat.shape[1] != n_groups:
-                raise ValueError("packed feature alignment failed (unexpected group count)")
-            target_raw = feat[:, -1]
-            valid_target = np.isfinite(target_raw) & (suspend.astype(int, copy=False) == 0)
-            target_valid_mat[idx, j] = valid_target.astype(np.uint8, copy=False)
-            if self.scale and mean is not None and scale is not None:
-                for f in range(n_groups):
-                    x = feat[:, f]
-                    valid = np.isfinite(x)
-                    if not valid.any():
-                        continue
-                    feat[valid, f] = (x[valid] - float(mean[f])) / (float(scale[f]) + 1e-8)
+            if feature_set == 'raw' or self.features == 'S':
+                feat = data[:, col_idx].astype(np.float32, copy=False)
+                # target validity mask (before filling NaNs): valid label & not suspended
+                if feat.shape[1] != n_groups:
+                    raise ValueError("packed feature alignment failed (unexpected group count)")
+                target_raw = feat[:, -1]
+                valid_target = np.isfinite(target_raw) & (suspend.astype(int, copy=False) == 0)
+                target_valid_mat[idx, j] = valid_target.astype(np.uint8, copy=False)
+                if self.scale and mean is not None and scale is not None:
+                    for f in range(n_groups):
+                        x = feat[:, f]
+                        valid = np.isfinite(x)
+                        if not valid.any():
+                            continue
+                        feat[valid, f] = (x[valid] - float(mean[f])) / (float(scale[f]) + 1e-8)
+            else:
+                if high_col_idx is None or low_col_idx is None or close_col_idx is None or preclose_col_idx is None:
+                    raise ValueError("alpha feature_set requires columns: high, low, close, preClose")
+                if volume_col_idx is None or amount_col_idx is None:
+                    raise ValueError("alpha feature_set requires columns: volume, amount")
+
+                open_px = data[:, open_col_idx].astype(np.float32, copy=False)
+                high_px = data[:, high_col_idx].astype(np.float32, copy=False)
+                low_px = data[:, low_col_idx].astype(np.float32, copy=False)
+                close_px = data[:, close_col_idx].astype(np.float32, copy=False)
+                pre_close = data[:, preclose_col_idx].astype(np.float32, copy=False)
+                volume = data[:, volume_col_idx].astype(np.float32, copy=False)
+                amount = data[:, amount_col_idx].astype(np.float32, copy=False)
+                target_vals = data[:, target_col_idx].astype(np.float32, copy=False)
+
+                suspend_int = suspend.astype(int, copy=False)
+                valid_base = (
+                    (suspend_int == 0)
+                    & np.isfinite(open_px) & (open_px > 0)
+                    & np.isfinite(high_px) & (high_px > 0)
+                    & np.isfinite(low_px) & (low_px > 0)
+                    & np.isfinite(close_px) & (close_px > 0)
+                    & np.isfinite(pre_close) & (pre_close > 0)
+                )
+                valid_target = np.isfinite(target_vals) & (suspend_int == 0)
+                target_valid_mat[idx, j] = valid_target.astype(np.uint8, copy=False)
+
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    gap_oc = open_px / pre_close - 1.0
+                    ret_intra = close_px / open_px - 1.0
+                    ret_cc = close_px / pre_close - 1.0
+                    hl_range = (high_px - low_px) / pre_close
+                    oc_max = np.maximum(open_px, close_px)
+                    oc_min = np.minimum(open_px, close_px)
+                    upper_wick = (high_px - oc_max) / pre_close
+                    lower_wick = (oc_min - low_px) / pre_close
+
+                log_volume = np.log1p(np.maximum(volume, 0.0))
+                log_amount = np.log1p(np.maximum(amount, 0.0))
+
+                gap_oc = np.where(valid_base, gap_oc, fill_value).astype(np.float32, copy=False)
+                ret_intra = np.where(valid_base, ret_intra, fill_value).astype(np.float32, copy=False)
+                ret_cc = np.where(valid_base, ret_cc, fill_value).astype(np.float32, copy=False)
+                hl_range = np.where(valid_base, hl_range, fill_value).astype(np.float32, copy=False)
+                upper_wick = np.where(valid_base, upper_wick, fill_value).astype(np.float32, copy=False)
+                lower_wick = np.where(valid_base, lower_wick, fill_value).astype(np.float32, copy=False)
+                log_volume = np.where(valid_base & np.isfinite(log_volume), log_volume, fill_value).astype(np.float32, copy=False)
+                log_amount = np.where(valid_base & np.isfinite(log_amount), log_amount, fill_value).astype(np.float32, copy=False)
+
+                target_filled = np.where(np.isfinite(target_vals), target_vals, fill_value).astype(np.float32, copy=False)
+                feat = np.stack(
+                    [gap_oc, ret_intra, ret_cc, hl_range, upper_wick, lower_wick, log_volume, log_amount, target_filled],
+                    axis=1
+                )
+                if feat.shape[1] != n_groups:
+                    raise ValueError(
+                        f"alpha feature alignment failed: got groups={feat.shape[1]} but expected n_groups={n_groups}"
+                    )
 
             feat = np.where(np.isfinite(feat), feat, fill_value).astype(np.float32, copy=False)
             for f in range(n_groups):
@@ -2041,6 +2143,25 @@ class Dataset_StockPacked(Dataset):
 
             open_mat[idx, j] = data[:, open_col_idx].astype(np.float32, copy=False)
             suspend_mat[idx, j] = suspend.astype(np.int16, copy=False)
+
+        # Cross-sectional normalization (daily z-score) for alpha-style feature groups (excluding target).
+        if feature_set != 'raw' and cs_norm == 'zscore' and self.features != 'S' and n_groups > 1:
+            x = data_mat.reshape(t_len, n_groups, n_codes)
+            valid_cs = (suspend_mat == 0) & (open_mat > 0)
+            w = valid_cs.astype(np.float32, copy=False)
+            for f in range(n_groups - 1):
+                xf = x[:, f, :]
+                cnt = w.sum(axis=1, keepdims=True)
+                cnt_safe = np.where(cnt > 0, cnt, 1.0)
+                mean_cs = (xf * w).sum(axis=1, keepdims=True) / cnt_safe
+                var_cs = (((xf - mean_cs) ** 2) * w).sum(axis=1, keepdims=True) / cnt_safe
+                std_cs = np.sqrt(var_cs + 1e-6)
+                z = (xf - mean_cs) / std_cs
+                z = np.where(valid_cs, z, 0.0).astype(np.float32, copy=False)
+                if cs_clip and cs_clip > 0:
+                    z = np.clip(z, -cs_clip, cs_clip, out=z)
+                x[:, f, :] = z
+            data_mat = x.reshape(t_len, n_groups * n_codes)
 
         if self.timeenc == 0:
             stamp_df = pd.DataFrame({'date': pd.to_datetime(common_dates)})
