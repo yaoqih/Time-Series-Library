@@ -2,7 +2,7 @@ import pandas as pd
 import os
 from xtquant import xtdata
 from xtquant import xtdatacenter as xtdc
-xtdc.set_token('8ac83dfbee81e0f3760123bac25857fc36a497e6')
+xtdc.set_token('')
 
 print('xtdc.init')
 xtdc.init() 
@@ -18,12 +18,14 @@ def get_done_list():
             return set(line.strip() for line in f if line.strip())
     return set()
 
-def download_and_save(stock_list):
+def download_and_save(stock_list,resume=False):
     # --- 1. 断点续传下载 ---
     done_set = get_done_list()
     # 过滤出还需要下载的股票
-    todo_list = [c for c in stock_list if c not in done_set]
-    
+    if resume:
+        todo_list = [c for c in stock_list if c not in done_set]
+    else:
+        todo_list = stock_list
     print(f"📊 总任务: {len(stock_list)} | 已完成: {len(done_set)} | 待下载: {len(todo_list)}")
 
     # 打开日志文件准备追加记录 (a模式)
@@ -91,5 +93,5 @@ if __name__ == "__main__":
     # my_stock_list = full_stock_list 
 
     # 运行主逻辑
-    download_and_save(my_stock_list)
+    download_and_save(my_stock_list,resume=True)
     # https://dict.thinktrader.net/nativeApi/download_xtquant.html?id=Q2YP51

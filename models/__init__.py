@@ -6,6 +6,7 @@ from . import Koopa, TiDE, FreTS, TimeMixer, TSMixer, SegRNN
 from . import TemporalFusionTransformer, SCINet, PAttn, TimeXer
 from . import WPMixer, MultiPatchFormer, KANAD, MSGNet, TimeFilter
 from . import AStockMixer
+from . import MaGNet
 
 # Optional models - gracefully skip if dependencies are missing
 # MambaSimple does not depend on mamba_ssm, so import it independently.
@@ -62,5 +63,6 @@ __all__ = [
     'MambaSimple', 'TemporalFusionTransformer', 'SCINet', 'PAttn', 'TimeXer',
     'WPMixer', 'MultiPatchFormer', 'KANAD', 'MSGNet', 'TimeFilter',
     'AStockMixer',
+    'MaGNet',
     'Sundial', 'TimeMoE', 'Chronos', 'Moirai', 'TiRex', 'TimesFM', 'Chronos2'
 ]

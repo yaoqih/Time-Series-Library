@@ -26,6 +26,7 @@ ZERO_SHOT_MODELS = {
     'Chronos', 'Chronos2', 'Moirai', 'Sundial', 'TiRex', 'TimeMoE', 'TimesFM'
 }
 RANK_TARGETS = {'lag_return_rank', 'lag_return_cs_rank'}
+CUSTOM_MODELS = {'MaGNet'}
 
 _STOCK_TRADE_CAL_CACHE = None
 _SETTING_SHORTEN_CACHE = {}
@@ -122,14 +123,57 @@ def build_setting(args, tag):
         f"df{args.d_ff}_expand{args.expand}_dc{args.d_conv}_"
         f"fc{args.factor}_eb{args.embed}_dt{args.distil}_{args.des}_{tag}"
     )
+    if args.model == 'MaGNet':
+        mdim = int(getattr(args, 'magnet_dim', 0) or 0)
+        mage = int(getattr(args, 'magnet_num_mage', 0) or 0)
+        mexp = int(getattr(args, 'magnet_num_experts', 0) or 0)
+        mh = int(getattr(args, 'magnet_num_heads_mha', 0) or 0)
+        f2d = int(getattr(args, 'magnet_num_f2dattn', 0) or 0)
+        s2d = int(getattr(args, 'magnet_num_s2dattn', 0) or 0)
+        mch = int(getattr(args, 'magnet_num_channels', 0) or 0)
+        cmh = int(getattr(args, 'magnet_num_heads_causal_mha', 0) or 0)
+        tch = int(getattr(args, 'magnet_num_tch', 0) or 0)
+        topk = int(getattr(args, 'magnet_topk', 0) or 0)
+        m1 = int(getattr(args, 'magnet_m1', 0) or 0)
+        gph = int(getattr(args, 'magnet_num_gph', 0) or 0)
+        m2 = int(getattr(args, 'magnet_m2', 0) or 0)
+        dr = getattr(args, 'magnet_dropout', None)
+        dr = float(dr) if dr is not None else None
+        dr_str = "none" if dr is None else f"{dr:g}".replace('-', 'm').replace('.', 'p')
+        ls = float(getattr(args, 'magnet_label_smoothing', 0.0) or 0.0)
+        ls_str = f"{ls:g}".replace('-', 'm').replace('.', 'p')
+        setting = (
+            f"{setting}_"
+            f"mdim{mdim}_mage{mage}_mexp{mexp}_mh{mh}_f2d{f2d}_s2d{s2d}_"
+            f"mch{mch}_cmh{cmh}_tch{tch}_topk{topk}_m1{m1}_gph{gph}_m2{m2}_"
+            f"mdr{dr_str}_mls{ls_str}"
+        )
     return _shorten_setting_name(setting)
 
 
 def normalize_model_name(name):
     return name.replace('-', '').replace(' ', '')
 
+def _is_custom_model(model_name: str) -> bool:
+    return str(model_name) in CUSTOM_MODELS
+
+
+def _import_magnet_class():
+    try:
+        from models.MaGNet import MaGNet as MaGNetCls
+    except Exception as exc:
+        raise ImportError(f"failed to import MaGNet from models: {exc}") from exc
+    return MaGNetCls
+
 
 def _model_available(model_name):
+    if _is_custom_model(model_name):
+        try:
+            _import_magnet_class()
+            return True
+        except Exception as exc:
+            print(f"[warn] custom model '{model_name}' unavailable: {exc}")
+            return False
     module = getattr(models_pkg, model_name, None)
     return module is not None and hasattr(module, "Model")
 
@@ -252,6 +296,517 @@ def _maybe_compile_model(model, use_gpu, gpu_type):
     except Exception as exc:
         print(f"[compile] skip: {exc}")
         return model
+
+
+def _acquire_device(args) -> torch.device:
+    if getattr(args, 'use_gpu', False) and getattr(args, 'gpu_type', 'cuda') == 'cuda' and torch.cuda.is_available():
+        if not getattr(args, 'disable_cuda_env', False):
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(
+                args.gpu) if not getattr(args, 'use_multi_gpu', False) else str(getattr(args, 'devices', '0'))
+        device = torch.device(f"cuda:{int(getattr(args, 'gpu', 0) or 0)}")
+        print(f'Use GPU: {device}')
+        return device
+    if getattr(args, 'use_gpu', False) and getattr(args, 'gpu_type', '') == 'mps':
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = torch.device('mps')
+            print('Use GPU: mps')
+            return device
+    device = torch.device('cpu')
+    print('Use CPU')
+    return device
+
+
+class _IndexedDataset(torch.utils.data.Dataset):
+    def __init__(self, base_dataset):
+        self.base = base_dataset
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, idx):
+        return int(idx), self.base[idx]
+
+
+def _magnet_resolve_hparams(args_run):
+    if getattr(args_run, 'magnet_dim', None) is None:
+        args_run.magnet_dim = int(getattr(args_run, 'd_model', 256) or 256)
+    if getattr(args_run, 'magnet_num_mage', None) is None:
+        args_run.magnet_num_mage = int(getattr(args_run, 'e_layers', 2) or 2)
+    if getattr(args_run, 'magnet_num_heads_mha', None) is None:
+        args_run.magnet_num_heads_mha = int(getattr(args_run, 'n_heads', 8) or 8)
+    if getattr(args_run, 'magnet_dropout', None) is None:
+        args_run.magnet_dropout = float(getattr(args_run, 'dropout', 0.1) or 0.1)
+
+
+def _magnet_get_target_slice(data_set):
+    target_slice = getattr(data_set, 'target_slice', None)
+    if target_slice and isinstance(target_slice, (list, tuple)) and len(target_slice) == 2:
+        target_start, target_end = int(target_slice[0]), int(target_slice[1])
+    else:
+        n_codes = int(getattr(data_set, 'n_codes', 0) or len(getattr(data_set, 'universe_codes', []) or []))
+        n_groups = int(getattr(data_set, 'n_groups', 0) or 1)
+        target_start, target_end = (n_groups - 1) * n_codes, n_groups * n_codes
+    return target_start, target_end
+
+
+def _magnet_pack_x(sample_x: torch.Tensor, *, n_groups: int, n_codes: int) -> torch.Tensor:
+    # sample_x: [T, n_groups*n_codes] -> [N, T, F]
+    if sample_x.ndim != 2:
+        raise ValueError(f"MaGNet expects 2D seq_x per sample, got shape={tuple(sample_x.shape)}")
+    t, c_in = int(sample_x.shape[0]), int(sample_x.shape[1])
+    if c_in != n_groups * n_codes:
+        raise ValueError(f"packed stock input mismatch: c_in={c_in} != n_groups*n_codes={n_groups*n_codes}")
+    return sample_x.reshape(t, n_groups, n_codes).permute(2, 0, 1).contiguous()
+
+
+def _magnet_build_model(args_run, data_set, device: torch.device):
+    _magnet_resolve_hparams(args_run)
+    MaGNetCls = _import_magnet_class()
+
+    n_codes = int(getattr(data_set, 'n_codes', 0) or 0)
+    n_groups = int(getattr(data_set, 'n_groups', 0) or 0)
+    if n_codes <= 0 or n_groups <= 0:
+        raise ValueError("MaGNet requires packed stock dataset with n_codes and n_groups > 0")
+
+    model = MaGNetCls(
+        N=n_codes,
+        T=int(args_run.seq_len),
+        F=n_groups,
+        dim=int(getattr(args_run, 'magnet_dim')),
+        num_MAGE=int(getattr(args_run, 'magnet_num_mage')),
+        num_experts=int(getattr(args_run, 'magnet_num_experts', 4) or 4),
+        num_heads_mha=int(getattr(args_run, 'magnet_num_heads_mha')),
+        num_F2DAttn=int(getattr(args_run, 'magnet_num_f2dattn', 1) or 1),
+        num_channels=int(getattr(args_run, 'magnet_num_channels', 8) or 8),
+        num_heads_CausalMHA=int(getattr(args_run, 'magnet_num_heads_causal_mha', 1) or 1),
+        num_TCH=int(getattr(args_run, 'magnet_num_tch', 1) or 1),
+        TopK=int(getattr(args_run, 'magnet_topk', 64) or 64),
+        M1=int(getattr(args_run, 'magnet_m1', 128) or 128),
+        num_S2DAttn=int(getattr(args_run, 'magnet_num_s2dattn', 1) or 1),
+        num_GPH=int(getattr(args_run, 'magnet_num_gph', 1) or 1),
+        M2=int(getattr(args_run, 'magnet_m2', 64) or 64),
+        device=device,
+        dropout=float(getattr(args_run, 'magnet_dropout', 0.1) or 0.1),
+    ).to(device)
+    return model
+
+
+def _magnet_compute_true_return(
+    args_run,
+    *,
+    data_set,
+    batch_y: np.ndarray,
+    batch_mask_y: np.ndarray | None,
+    batch_i: int,
+    ds_i: int,
+):
+    trade_horizon = int(getattr(args_run, 'trade_horizon', 2) or 2)
+    step_idx = trade_horizon - 1
+    need_true_open_return = getattr(args_run, 'target', '') in RANK_TARGETS
+
+    true_return_limit = getattr(args_run, 'stock_true_return_limit', None)
+    if true_return_limit is None:
+        true_return_limit = STOCK_RETURN_LIMIT
+    if true_return_limit is not None:
+        true_return_limit = float(true_return_limit)
+
+    target_start, target_end = _magnet_get_target_slice(data_set)
+    true_step = batch_y[batch_i, step_idx, target_start:target_end]
+    true_mask = None
+    if batch_mask_y is not None:
+        true_mask = batch_mask_y[batch_i, step_idx, target_start:target_end]
+
+    end_idx = int(data_set.sample_index[ds_i])
+    trade_idx = end_idx + 1
+    exit_idx = end_idx + step_idx + 1
+    open_mat = getattr(data_set, 'open', None)
+    suspend_mat = getattr(data_set, 'suspend', None)
+    codes = getattr(data_set, 'universe_codes', None)
+    if not codes:
+        raise ValueError("packed dataset missing universe_codes")
+
+    suspend_flags = suspend_mat[trade_idx] if suspend_mat is not None else np.zeros(len(codes), dtype=int)
+
+    if need_true_open_return:
+        if open_mat is None:
+            raise ValueError("packed dataset missing open matrix required for true return")
+        open_trade = open_mat[trade_idx]
+        open_exit = open_mat[exit_idx]
+        with np.errstate(divide='ignore', invalid='ignore'):
+            true_ret = open_exit / open_trade - 1.0
+        true_ret = np.where((open_trade > 0) & (open_exit > 0), true_ret, np.nan)
+        if true_return_limit is not None:
+            true_ret = np.where(np.abs(true_ret) <= true_return_limit, true_ret, np.nan)
+        valid = np.isfinite(true_ret)
+    else:
+        true_ret = true_step
+        valid = np.isfinite(true_ret)
+        if true_mask is not None:
+            valid &= (true_mask > 0.0)
+        if true_return_limit is not None:
+            valid &= (np.abs(true_ret) <= true_return_limit)
+
+    # Train/eval on tradable universe only (consistent with backtest filter suspendFlag==0).
+    valid &= (suspend_flags == 0)
+    labels = (true_ret > 0.0).astype(np.int64, copy=False)
+    return labels, valid, true_ret, suspend_flags
+
+
+def _magnet_eval_epoch(model, data_set, data_loader, args_run, device: torch.device):
+    model.eval()
+    criterion = torch.nn.CrossEntropyLoss(label_smoothing=float(getattr(args_run, 'magnet_label_smoothing', 0.0) or 0.0))
+    total_loss = 0.0
+    total_valid = 0
+    total_correct = 0
+    n_groups = int(getattr(data_set, 'n_groups', 0) or 0)
+    n_codes = int(getattr(data_set, 'n_codes', 0) or 0)
+    with torch.no_grad():
+        for ds_idx, batch in data_loader:
+            if isinstance(batch, (list, tuple)) and len(batch) == 5:
+                batch_x, batch_y, _, _, batch_mask_y = batch
+            else:
+                batch_x, batch_y, _, _ = batch
+                batch_mask_y = None
+
+            batch_x = batch_x.float().to(device)
+            batch_y = batch_y.float().to(device)
+            if batch_mask_y is not None:
+                batch_mask_y = batch_mask_y.float().to(device)
+
+            batch_y = batch_y[:, -args_run.pred_len:, :]
+            if batch_mask_y is not None:
+                batch_mask_y = batch_mask_y[:, -args_run.pred_len:, :]
+
+            batch_y_np = batch_y.detach().cpu().numpy()
+            batch_mask_np = batch_mask_y.detach().cpu().numpy() if batch_mask_y is not None else None
+            if getattr(data_set, 'scale', False) and getattr(args_run, 'inverse', False):
+                batch_y_np = data_set.inverse_transform(batch_y_np)
+
+            ds_idx_list = [int(i) for i in ds_idx.detach().cpu().tolist()] if torch.is_tensor(ds_idx) else [int(i) for i in ds_idx]
+            for bi, ds_i in enumerate(ds_idx_list):
+                x_i = _magnet_pack_x(batch_x[bi], n_groups=n_groups, n_codes=n_codes)
+                logits, *_ = model(x_i)
+
+                labels, valid, _, _ = _magnet_compute_true_return(
+                    args_run,
+                    data_set=data_set,
+                    batch_y=batch_y_np,
+                    batch_mask_y=batch_mask_np,
+                    batch_i=bi,
+                    ds_i=ds_i,
+                )
+                if not valid.any():
+                    continue
+                valid_idx = torch.from_numpy(np.flatnonzero(valid)).to(device)
+                logits_v = logits.index_select(0, valid_idx)
+                labels_v = torch.from_numpy(labels[valid]).to(device)
+
+                loss = criterion(logits_v, labels_v)
+                pred = logits_v.argmax(dim=-1)
+                correct = int((pred == labels_v).sum().item())
+                n = int(labels_v.numel())
+                total_correct += correct
+                total_valid += n
+                total_loss += float(loss.item()) * n
+
+    out = {
+        'loss': float(total_loss / max(1, total_valid)),
+        'accuracy': float(total_correct / max(1, total_valid)),
+        'n_labels': int(total_valid),
+    }
+    return out
+
+
+def _train_magnet(args_run, *, setting: str, checkpoint_path: str):
+    if not getattr(args_run, 'stock_pack', False):
+        raise ValueError("MaGNet integration requires --stock_pack")
+
+    device = _acquire_device(args_run)
+
+    train_set, _ = data_provider(args_run, 'train')
+    val_set, _ = data_provider(args_run, 'val')
+
+    if not getattr(train_set, 'packed', False) or not getattr(val_set, 'packed', False):
+        raise ValueError("MaGNet requires packed stock dataset (Dataset_StockPacked)")
+
+    train_loader = DataLoader(
+        _IndexedDataset(train_set),
+        batch_size=args_run.batch_size,
+        shuffle=True,
+        num_workers=args_run.num_workers,
+        pin_memory=(device.type == 'cuda'),
+        drop_last=False,
+    )
+    val_loader = DataLoader(
+        _IndexedDataset(val_set),
+        batch_size=args_run.batch_size,
+        shuffle=False,
+        num_workers=args_run.num_workers,
+        pin_memory=(device.type == 'cuda'),
+        drop_last=False,
+    )
+
+    model = _magnet_build_model(args_run, train_set, device)
+
+    use_amp = bool(getattr(args_run, 'use_amp', False)) and device.type == 'cuda'
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=float(getattr(args_run, 'learning_rate', 1e-4) or 1e-4),
+        weight_decay=float(getattr(args_run, 'weight_decay', 0.0) or 0.0),
+    )
+    criterion = torch.nn.CrossEntropyLoss(label_smoothing=float(getattr(args_run, 'magnet_label_smoothing', 0.0) or 0.0))
+
+    n_groups = int(getattr(train_set, 'n_groups', 0) or 0)
+    n_codes = int(getattr(train_set, 'n_codes', 0) or 0)
+    if n_groups <= 0 or n_codes <= 0:
+        raise ValueError("packed dataset missing n_groups/n_codes")
+
+    best_val_loss = float('inf')
+    best_state = None
+    patience = int(getattr(args_run, 'patience', 3) or 3)
+    patience = max(1, patience)
+    bad_epochs = 0
+    accum_steps = int(getattr(args_run, 'accumulation_steps', 1) or 1)
+    accum_steps = max(1, accum_steps)
+    grad_clip = float(getattr(args_run, 'grad_clip', 0.0) or 0.0)
+
+    for epoch in range(int(getattr(args_run, 'train_epochs', 10) or 10)):
+        model.train()
+        optimizer.zero_grad(set_to_none=True)
+        total_loss = 0.0
+        total_valid = 0
+        total_correct = 0
+        grad_steps = 0
+
+        for step, (ds_idx, batch) in enumerate(train_loader, start=1):
+            if isinstance(batch, (list, tuple)) and len(batch) == 5:
+                batch_x, batch_y, _, _, batch_mask_y = batch
+            else:
+                batch_x, batch_y, _, _ = batch
+                batch_mask_y = None
+
+            batch_x = batch_x.float().to(device)
+            batch_y = batch_y.float().to(device)
+            if batch_mask_y is not None:
+                batch_mask_y = batch_mask_y.float().to(device)
+
+            batch_y = batch_y[:, -args_run.pred_len:, :]
+            if batch_mask_y is not None:
+                batch_mask_y = batch_mask_y[:, -args_run.pred_len:, :]
+
+            batch_y_np = batch_y.detach().cpu().numpy()
+            batch_mask_np = batch_mask_y.detach().cpu().numpy() if batch_mask_y is not None else None
+            if getattr(train_set, 'scale', False) and getattr(args_run, 'inverse', False):
+                batch_y_np = train_set.inverse_transform(batch_y_np)
+
+            ds_idx_list = [int(i) for i in ds_idx.detach().cpu().tolist()] if torch.is_tensor(ds_idx) else [int(i) for i in ds_idx]
+            loss_sum = None
+            n_loss_terms = 0
+            batch_valid = 0
+            batch_correct = 0
+
+            for bi, ds_i in enumerate(ds_idx_list):
+                x_i = _magnet_pack_x(batch_x[bi], n_groups=n_groups, n_codes=n_codes)
+
+                if use_amp:
+                    with torch.cuda.amp.autocast():
+                        logits, *_ = model(x_i)
+                else:
+                    logits, *_ = model(x_i)
+
+                labels, valid, _, _ = _magnet_compute_true_return(
+                    args_run,
+                    data_set=train_set,
+                    batch_y=batch_y_np,
+                    batch_mask_y=batch_mask_np,
+                    batch_i=bi,
+                    ds_i=ds_i,
+                )
+                if not valid.any():
+                    continue
+
+                valid_idx = torch.from_numpy(np.flatnonzero(valid)).to(device)
+                logits_v = logits.index_select(0, valid_idx)
+                labels_v = torch.from_numpy(labels[valid]).to(device)
+                loss = criterion(logits_v, labels_v)
+                pred = logits_v.argmax(dim=-1)
+                batch_correct += int((pred == labels_v).sum().item())
+                batch_valid += int(labels_v.numel())
+                n_loss_terms += 1
+
+                if loss_sum is None:
+                    loss_sum = loss
+                else:
+                    loss_sum = loss_sum + loss
+
+            if loss_sum is None:
+                continue
+
+            loss_mean = loss_sum / max(1, n_loss_terms)
+            total_loss += float(loss_mean.detach().item()) * batch_valid
+            total_valid += batch_valid
+            total_correct += batch_correct
+
+            loss_scaled = loss_mean / accum_steps
+            if use_amp:
+                scaler.scale(loss_scaled).backward()
+            else:
+                loss_scaled.backward()
+
+            grad_steps += 1
+            if grad_steps % accum_steps == 0:
+                if grad_clip and grad_clip > 0:
+                    if use_amp:
+                        scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                if use_amp:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+
+        # Flush remainder accumulation
+        if grad_steps and (grad_steps % accum_steps) != 0:
+            if grad_clip and grad_clip > 0:
+                if use_amp:
+                    scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            if use_amp:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+
+        train_loss = float(total_loss / max(1, total_valid))
+        train_acc = float(total_correct / max(1, total_valid))
+        val_metrics = _magnet_eval_epoch(model, val_set, val_loader, args_run, device)
+        val_loss = float(val_metrics['loss'])
+        val_acc = float(val_metrics['accuracy'])
+
+        print(
+            f"[MaGNet] epoch {epoch + 1}/{int(getattr(args_run, 'train_epochs', 10) or 10)} "
+            f"train_loss={train_loss:.6f} train_acc={train_acc:.4f} "
+            f"val_loss={val_loss:.6f} val_acc={val_acc:.4f}"
+        )
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            bad_epochs = 0
+        else:
+            bad_epochs += 1
+            if bad_epochs >= patience:
+                print(f"[MaGNet] early stop: no val_loss improvement for {patience} epochs")
+                break
+
+    if best_state is None:
+        best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+    model.load_state_dict(best_state)
+
+    ckpt_dir = os.path.dirname(checkpoint_path)
+    if ckpt_dir:
+        os.makedirs(ckpt_dir, exist_ok=True)
+    torch.save({'state_dict': model.state_dict()}, checkpoint_path)
+    return model, device
+
+
+def _predict_magnet_dataset(model, device, data_set, data_loader, args_run):
+    model.eval()
+    records = []
+    trade_horizon = int(getattr(args_run, 'trade_horizon', 2) or 2)
+    step_idx = trade_horizon - 1
+    need_true_open_return = getattr(args_run, 'target', '') in RANK_TARGETS
+
+    true_return_limit = getattr(args_run, 'stock_true_return_limit', None)
+    if true_return_limit is None:
+        true_return_limit = STOCK_RETURN_LIMIT
+    if true_return_limit is not None:
+        true_return_limit = float(true_return_limit)
+
+    target_start, target_end = _magnet_get_target_slice(data_set)
+    codes = getattr(data_set, 'universe_codes', None)
+    if not codes:
+        raise ValueError("packed dataset missing universe_codes")
+    open_mat = getattr(data_set, 'open', None)
+    suspend_mat = getattr(data_set, 'suspend', None)
+    dates = getattr(data_set, 'dates', None)
+    if dates is None:
+        raise ValueError("packed dataset missing dates")
+
+    n_groups = int(getattr(data_set, 'n_groups', 0) or 0)
+    n_codes = int(getattr(data_set, 'n_codes', 0) or 0)
+    if n_groups <= 0 or n_codes <= 0:
+        raise ValueError("packed dataset missing n_groups/n_codes")
+
+    use_amp = bool(getattr(args_run, 'use_amp', False)) and device.type == 'cuda'
+    with torch.no_grad():
+        for ds_idx, batch in data_loader:
+            if isinstance(batch, (list, tuple)) and len(batch) == 5:
+                batch_x, batch_y, _, _, batch_mask_y = batch
+            else:
+                batch_x, batch_y, _, _ = batch
+                batch_mask_y = None
+
+            batch_x = batch_x.float().to(device)
+            batch_y = batch_y.float().to(device)
+            if batch_mask_y is not None:
+                batch_mask_y = batch_mask_y.float().to(device)
+
+            batch_y = batch_y[:, -args_run.pred_len:, :]
+            if batch_mask_y is not None:
+                batch_mask_y = batch_mask_y[:, -args_run.pred_len:, :]
+
+            batch_y_np = batch_y.detach().cpu().numpy()
+            if getattr(data_set, 'scale', False) and getattr(args_run, 'inverse', False):
+                batch_y_np = data_set.inverse_transform(batch_y_np)
+            batch_y_t = batch_y_np[:, :, target_start:target_end]
+
+            ds_idx_list = [int(i) for i in ds_idx.detach().cpu().tolist()] if torch.is_tensor(ds_idx) else [int(i) for i in ds_idx]
+            for bi, ds_i in enumerate(ds_idx_list):
+                end_idx = int(data_set.sample_index[ds_i])
+                trade_idx = end_idx + 1
+                exit_idx = end_idx + step_idx + 1
+                meta = data_set.sample_meta[ds_i]
+                exit_date = pd.Timestamp(dates[exit_idx])
+
+                x_i = _magnet_pack_x(batch_x[bi], n_groups=n_groups, n_codes=n_codes)
+                if use_amp:
+                    with torch.cuda.amp.autocast():
+                        logits, *_ = model(x_i)
+                else:
+                    logits, *_ = model(x_i)
+                score = torch.softmax(logits, dim=-1)[:, 1].detach().cpu().numpy()
+
+                if need_true_open_return:
+                    if open_mat is None:
+                        raise ValueError("packed dataset missing open matrix required for true return")
+                    open_trade = open_mat[trade_idx]
+                    open_exit = open_mat[exit_idx]
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        true_ret = open_exit / open_trade - 1.0
+                    true_ret = np.where((open_trade > 0) & (open_exit > 0), true_ret, np.nan)
+                    if true_return_limit is not None:
+                        true_ret = np.where(np.abs(true_ret) <= true_return_limit, true_ret, np.nan)
+                else:
+                    true_ret = batch_y_t[bi, step_idx, :]
+
+                suspend_flags = suspend_mat[trade_idx] if suspend_mat is not None else np.zeros(len(codes), dtype=int)
+                for j, code in enumerate(codes):
+                    records.append({
+                        'code': code,
+                        'end_date': meta['end_date'],
+                        'trade_date': meta['trade_date'],
+                        'pred_date': meta['pred_date'],
+                        'exit_date': exit_date,
+                        'suspendFlag': int(suspend_flags[j]),
+                        'pred_return': float(score[j]),
+                        'true_return': float(true_ret[j]) if np.isfinite(true_ret[j]) else float('nan'),
+                    })
+    return pd.DataFrame.from_records(records)
 
 
 def _compute_sharpe_series(dates, capital, initial_cash, risk_free):
@@ -1391,7 +1946,7 @@ def parse_args():
     parser.add_argument('--target', type=str, default='lag_return', help='target feature')
     parser.add_argument('--freq', type=str, default='b', help='freq for time features encoding')
 
-    parser.add_argument('--train_epochs', type=int, default=20, help='train epochs')
+    parser.add_argument('--train_epochs', type=int, default=10, help='train epochs')
     parser.add_argument('--batch_size', type=int, default=2, help='batch size')
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='learning rate')
     parser.add_argument('--weight_decay', type=float, default=0.0001, help='weight decay for Adam')
@@ -1428,7 +1983,7 @@ def parse_args():
                         help='(RANK_UTILITY) utility weight ramp epochs after warmup')
     parser.add_argument('--rank_utility_normalize_weights', type=_str2bool, nargs='?', const=True, default=True,
                         help='(RANK_UTILITY) normalize rank/utility weights to sum to 1 each epoch')
-    parser.add_argument('--patience', type=int, default=5, help='early stopping patience')
+    parser.add_argument('--patience', type=int, default=3, help='early stopping patience')
     parser.add_argument('--num_workers', type=int, default=8, help='data loader workers')
     parser.add_argument('--persistent_workers', action='store_true', default=True,
                         help='keep data loader workers alive between epochs')
@@ -1460,6 +2015,25 @@ def parse_args():
                         help='hidden layer dimensions of projector (List)')
     parser.add_argument('--p_hidden_layers', type=int, default=2,
                         help='number of hidden layers in projector')
+
+    # MaGNet (custom stock model; classification score used for ranking)
+    parser.add_argument('--magnet_dim', type=int, default=None, help='(MaGNet) embedding dim (default: --d_model)')
+    parser.add_argument('--magnet_num_mage', type=int, default=None, help='(MaGNet) MAGE depth (default: --e_layers)')
+    parser.add_argument('--magnet_num_experts', type=int, default=4, help='(MaGNet) MoE experts')
+    parser.add_argument('--magnet_num_heads_mha', type=int, default=None,
+                        help='(MaGNet) MHA heads inside MAGE (default: --n_heads)')
+    parser.add_argument('--magnet_num_f2dattn', type=int, default=1, help='(MaGNet) F2D-attn blocks')
+    parser.add_argument('--magnet_num_s2dattn', type=int, default=1, help='(MaGNet) S2D-attn blocks')
+    parser.add_argument('--magnet_num_channels', type=int, default=8, help='(MaGNet) 2D-attn channel dim')
+    parser.add_argument('--magnet_num_heads_causal_mha', type=int, default=1, help='(MaGNet) causal MHA heads')
+    parser.add_argument('--magnet_num_tch', type=int, default=1, help='(MaGNet) local hypergraph conv layers')
+    parser.add_argument('--magnet_topk', type=int, default=64, help='(MaGNet) local hypergraph top-k')
+    parser.add_argument('--magnet_m1', type=int, default=128, help='(MaGNet) local hyperedges')
+    parser.add_argument('--magnet_num_gph', type=int, default=1, help='(MaGNet) global hypergraph conv layers')
+    parser.add_argument('--magnet_m2', type=int, default=64, help='(MaGNet) global hyperedges')
+    parser.add_argument('--magnet_dropout', type=float, default=None, help='(MaGNet) dropout (default: --dropout)')
+    parser.add_argument('--magnet_label_smoothing', type=float, default=0.0,
+                        help='(MaGNet) CE label_smoothing (0 disables)')
 
     parser.add_argument('--use_gpu', type=_str2bool, nargs='?', const=True, default=True, help='use gpu')
     parser.add_argument('--gpu', type=int, default=0, help='gpu id')
@@ -1571,6 +2145,8 @@ def _run_window(base_args, model_name, window, use_window_seed=False):
         print(f"[config] ETSformer requires e_layers == d_layers; setting d_layers={args_run.e_layers}")
         args_run.d_layers = args_run.e_layers
     _adjust_segrnn_seg_len(args_run)
+    if model_name == 'MaGNet':
+        _magnet_resolve_hparams(args_run)
 
     if getattr(args_run, 'stock_pack', False):
         trade_cal = _load_stock_trade_calendar(args_run)
@@ -1662,13 +2238,28 @@ def _run_window(base_args, model_name, window, use_window_seed=False):
     if args_run.use_wandb:
         init_wandb(args_run, name=run_name, group=args_run.wandb_group, tags=[model_name, 'rolling'])
     try:
-        exp = Exp_Long_Term_Forecast(args_run)
-        exp.model = _maybe_compile_model(exp.model, args_run.use_gpu, args_run.gpu_type)
-        if model_name not in ZERO_SHOT_MODELS:
+        exp = None
+        magnet_model = None
+        magnet_device = None
+
+        if model_name == 'MaGNet':
             if needs_train:
-                exp.train(setting)
+                magnet_model, magnet_device = _train_magnet(args_run, setting=setting, checkpoint_path=checkpoint_path)
             else:
-                exp.model.load_state_dict(torch.load(checkpoint_path, map_location=exp.device))
+                magnet_device = _acquire_device(args_run)
+                train_set, _ = data_provider(args_run, 'train')
+                magnet_model = _magnet_build_model(args_run, train_set, magnet_device)
+                ckpt = torch.load(checkpoint_path, map_location='cpu')
+                state = ckpt.get('state_dict') if isinstance(ckpt, dict) else None
+                magnet_model.load_state_dict(state if state is not None else ckpt)
+        else:
+            exp = Exp_Long_Term_Forecast(args_run)
+            exp.model = _maybe_compile_model(exp.model, args_run.use_gpu, args_run.gpu_type)
+            if model_name not in ZERO_SHOT_MODELS:
+                if needs_train:
+                    exp.train(setting)
+                else:
+                    exp.model.load_state_dict(torch.load(checkpoint_path, map_location=exp.device))
 
         os.makedirs(result_dir, exist_ok=True)
         wandb_mod = None
@@ -1686,15 +2277,26 @@ def _run_window(base_args, model_name, window, use_window_seed=False):
                 print(f"[resume] skip {window_tag} {split}: results already exist.")
                 continue
             data_set, _ = data_provider(args_run, split)
-            data_loader = DataLoader(
-                data_set,
-                batch_size=args_run.batch_size,
-                shuffle=False,
-                num_workers=args_run.num_workers,
-                pin_memory=args_run.use_gpu and args_run.gpu_type == 'cuda',
-                drop_last=False
-            )
-            pred_df = predict_dataset(exp, data_set, data_loader, args_run)
+            if model_name == 'MaGNet':
+                data_loader = DataLoader(
+                    _IndexedDataset(data_set),
+                    batch_size=args_run.batch_size,
+                    shuffle=False,
+                    num_workers=args_run.num_workers,
+                    pin_memory=(magnet_device is not None and magnet_device.type == 'cuda'),
+                    drop_last=False
+                )
+                pred_df = _predict_magnet_dataset(magnet_model, magnet_device, data_set, data_loader, args_run)
+            else:
+                data_loader = DataLoader(
+                    data_set,
+                    batch_size=args_run.batch_size,
+                    shuffle=False,
+                    num_workers=args_run.num_workers,
+                    pin_memory=args_run.use_gpu and args_run.gpu_type == 'cuda',
+                    drop_last=False
+                )
+                pred_df = predict_dataset(exp, data_set, data_loader, args_run)
             metrics, curve_df, picks_df, daily_df, cs_diag_df = backtest_topk_detailed(
                 pred_df,
                 initial_cash=args_run.initial_cash,
